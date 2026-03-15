@@ -13,10 +13,12 @@ providing the correct PIN. Plaintext must never cross the network.
 - Create page: `https://my-web-app.com`
 - Retrieve page: `https://my-web-app.com/message/{id}#{passphrase}`
 - Message id format: exactly `3` Diceware-style words plus `6` random digits
-- Passphrase format: exactly `4` Diceware-style words
+- Passphrase format: exactly `4` Diceware-style words from the EFF large wordlist (`7776` words, ~`12.9` bits/word)
+- Passphrase entropy: ~`51.7` bits from the passphrase plus ~`19.9` bits from the PIN = ~`71.6` bits total KDF input
 - PIN format: exactly `6` digits
 - Payload types: plain text or a single file
 - Initial payload limit: `25 MB`
+- TTL presets: `15 minutes` (default), `30 minutes`, `1 hour`, plus user-custom between `1 minute` and `24 hours`
 
 ## User Flow
 
@@ -27,11 +29,13 @@ providing the correct PIN. Plaintext must never cross the network.
 3. User enters a `6` digit PIN.
 4. User selects a TTL preset from the UI.
 5. User clicks `Generate secure link`.
-6. Browser generates the message id, passphrase, salts, IVs, and a random content key.
-7. Browser encrypts the payload locally.
-8. Browser sends only encrypted data, metadata, and PIN verification material to the backend.
-9. Backend stores the record in memory until retrieval, expiry, or deletion policy removes it.
-10. Browser displays the final share URL.
+6. Browser generates the message id, passphrase, salts, IV, and a random content key.
+7. Browser derives a key-encryption key from the passphrase and PIN using `PBKDF2`.
+8. Browser encrypts the payload with `AES-GCM`, using the wrapped content key as additional authenticated data (AAD).
+9. Browser wraps the content key with the passphrase-derived key using `AES-KW`.
+10. Browser sends the encrypted payload, wrapped key, crypto metadata, and raw PIN as form data to the backend.
+11. Backend derives and stores a PIN verifier, stores the encrypted record in memory.
+12. Browser displays the final share URL.
 
 ### Share
 
@@ -61,12 +65,27 @@ providing the correct PIN. Plaintext must never cross the network.
 - Plaintext never leaves the browser
 - The server never receives the URL fragment passphrase
 - The server stores only ciphertext, crypto metadata, and verification data needed for policy enforcement
+- Decryption requires both the passphrase (from the URL fragment) and the PIN, making it two-factor
 - Successful retrieval deletes the message immediately
 - `3` failed PIN attempts delete the message by default, with the threshold configurable on the server side
 - Expired messages are removed automatically
 
+### Known Trade-offs
+
+- **Deletion before receipt**: the server deletes the message immediately after issuing the retrieval response. If
+  the connection drops before the client receives the full response, the message is lost with no retry. This is an
+  accepted trade-off of one-time retrieval semantics.
+- **Message ID in server logs**: the message ID appears in URL paths and may be recorded in server access logs.
+  Combined with IP addresses and timestamps, this could allow correlation between creators and retrievers. Accepted
+  for v1; can be mitigated later with log filtering.
+
 ### PIN Handling
 
+- The PIN is an **online access gate**, not a standalone cryptographic secret. Its `6` digits provide ~`19.9` bits
+  of entropy, which is insufficient to resist offline brute-force on its own.
+- The PIN is also used as an input to the client-side KDF alongside the passphrase, making decryption two-factor.
+  Server memory compromise does not compromise message confidentiality because the server never receives the
+  passphrase.
 - The backend receives the raw PIN during create and retrieve requests over HTTPS
 - The backend should not store the raw PIN at rest
 - The backend stores a strong verifier, such as `Argon2id(pin + per-message salt + server pepper)`
@@ -76,27 +95,27 @@ providing the correct PIN. Plaintext must never cross the network.
 
 ### Recommended Scheme
 
-- Generate a random `256-bit` content encryption key in the browser for each message
-- Encrypt the payload with `AES-GCM`
-- Derive a key-encryption key from the `4` word passphrase using a KDF
-- Wrap the random content key with the passphrase-derived key
-- Upload the ciphertext, wrapped content key, and crypto metadata to the backend
+- Generate a random `256-bit` content encryption key (CEK) in the browser for each message
+- Derive a key-encryption key (KEK) from the passphrase and PIN using `PBKDF2` with a per-message salt
+- Wrap the CEK with the KEK using `AES-KW` (RFC 3394, available in Web Crypto)
+- Encrypt the payload with `AES-GCM` using the CEK, including the wrapped CEK bytes as additional authenticated
+  data (AAD) to bind the ciphertext and wrapped key together cryptographically
+- Upload the ciphertext, wrapped CEK, and crypto metadata to the backend
 
 ### KDF Choice
 
-- Preferred: `Argon2id` in the browser via a small vetted WASM or JavaScript helper
-- Fallback: Web Crypto friendly KDF such as `PBKDF2`, if implementation simplicity outweighs the benefits of a
-  memory-hard KDF for v1
-- The selected KDF and parameters must be stored in crypto metadata for versioned decryption
+- v1: `PBKDF2` via Web Crypto with a high iteration count (minimum `600,000` iterations for `PBKDF2-SHA-256`)
+- Future: upgrade to `Argon2id` via a vetted WASM helper for memory-hard brute-force resistance
+- KDF input: `passphrase || PIN` concatenated, with a random per-message salt
+- The selected KDF, parameters, and algorithm versions must be stored in crypto metadata for versioned decryption
 
 ### Payload Handling
 
 - Text payloads are encrypted as UTF-8 bytes
-- File payloads are encrypted as raw bytes
-- For file payloads, the backend may store unencrypted metadata limited to:
-    - original filename
-    - MIME type
-    - size
+- File payloads are encrypted as raw bytes with file metadata (filename, MIME type) bundled inside the encrypted
+  payload so the server never sees them
+- The server knows only that the payload type is `file` and can infer approximate size from ciphertext length
+- The client reconstructs filename and MIME type after decryption to trigger the correct download
 
 ## Backend Data Model
 
@@ -104,11 +123,18 @@ Each message record stored in memory contains:
 
 - `id`
 - `payloadType` (`text` or `file`)
-- `ciphertext`
+- `ciphertext` (includes encrypted file metadata for file payloads)
 - `wrappedContentKey`
-- `cryptoMetadata` (`salt`, `iv`, KDF parameters, algorithm version)
-- `fileMetadata` {filename, mimeType, size} when applicable
+- `cryptoMetadata`:
+    - `kdfSalt` (random per-message salt for PBKDF2)
+    - `iv` (AES-GCM initialization vector)
+    - `kdfAlgorithm` (e.g. `PBKDF2-SHA-256`)
+    - `kdfIterations`
+    - `encryptionAlgorithm` (e.g. `AES-256-GCM`)
+    - `wrappingAlgorithm` (e.g. `AES-KW`)
+    - `schemaVersion` (for forward-compatible decryption)
 - `pinVerifier`
+- `pinSalt` (per-message salt for Argon2id PIN verifier)
 - `expiresAt`
 - `failedPinAttempts`
 - `createdAt`
@@ -127,40 +153,82 @@ Each message record stored in memory contains:
 
 ### `POST /api/messages`
 
-Request includes:
+Request format: `multipart/form-data`
 
-- `id`
-- `payloadType`
-- `ciphertext`
-- `wrappedContentKey`
-- `cryptoMetadata`
-- `pin` or material sufficient to derive the stored verifier
-- `ttl`
-- optional file metadata
+Fields:
+
+- `id` (string)
+- `payloadType` (`text` or `file`)
+- `ciphertext` (binary part)
+- `wrappedContentKey` (base64 string)
+- `cryptoMetadata` (JSON string)
+- `pin` (raw `6` digit string; server derives and stores the verifier)
+- `ttl` (integer, seconds)
 
 Backend behavior:
 
 - validate id format
-- validate payload size and payload type
-- validate TTL preset against server policy
-- reject collisions and let the client retry with a new id
+- validate payload size against server maximum
+- validate payload type
+- validate TTL against server policy (must be between `1 minute` and `24 hours`)
+- reject id collisions and let the client retry with a new id
+- derive and store PIN verifier using `Argon2id(pin + per-message salt + server pepper)`
 - return success plus canonical expiry timestamp
+
+Success response (`201`):
+
+```json
+{ "expiresAt": "2026-03-14T12:15:00Z" }
+```
+
+Error responses:
+
+- `400` — invalid request (bad id format, unsupported payload type, TTL out of range)
+- `409` — id collision, client should retry with a new id
+- `413` — payload too large
+- `503` — server storage capacity reached
+
+All error responses use a consistent shape:
+
+```json
+{ "error": "description" }
+```
 
 ### `POST /api/messages/{id}/retrieve`
 
-Request includes:
+Request format: `application/x-www-form-urlencoded` or `application/json`
 
-- `pin`
+Fields:
+
+- `pin` (raw `6` digit string)
 
 Backend behavior:
 
 - validate existence and active state
 - validate expiry
 - validate failed-attempt threshold
-- verify PIN
+- verify PIN against stored verifier
 - increment failed attempts on failure
 - delete the message if the failure threshold is reached
 - return encrypted package on success and delete the message immediately
+
+Success response (`200`):
+
+```json
+{
+  "payloadType": "text",
+  "ciphertext": "<base64>",
+  "wrappedContentKey": "<base64>",
+  "cryptoMetadata": { ... }
+}
+```
+
+Error responses:
+
+- `403` — PIN verification failed (generic; does not reveal remaining attempts)
+- `404` — message not found, expired, already retrieved, or deleted due to failed attempts (generic; same
+  response for all terminal states to avoid information leakage)
+- `429` — rate limited
 
 ### Omitted From v1
 
@@ -192,7 +260,7 @@ Backend behavior:
 - Backend: Java + Gradle + Micronaut
 - HTML rendering: JTE
 - Browser interaction: HTMX for form and page enhancement
-- Client cryptography: browser JavaScript using Web Crypto, with a small helper library if needed for `Argon2id`
+- Client cryptography: browser JavaScript using Web Crypto (`PBKDF2`, `AES-GCM`, `AES-KW`)
 
 ## Stack-Specific Architecture
 
@@ -207,11 +275,12 @@ Backend behavior:
 - Single backend instance is the simplest v1 deployment
 - If multiple instances are introduced, the system needs sticky routing or a shared ephemeral store such as Redis
 - Server config should define:
-    - allowed TTL presets
+    - allowed TTL presets and custom TTL bounds (`1 minute` to `24 hours`)
     - maximum payload size
+    - maximum total stored messages and/or total stored bytes (to prevent memory exhaustion)
     - maximum failed PIN attempts
-    - KDF parameters
-    - rate limits
+    - KDF parameters (PBKDF2 iteration count for client guidance; Argon2id parameters for PIN verification)
+    - rate limits (per IP and global, for both create and retrieve)
     - optional server pepper for PIN verification
 
 ## Security Hardening
@@ -224,6 +293,7 @@ Backend behavior:
 - Rate-limit create and retrieve endpoints
 - Normalize error messages so state is not overexposed
 - Ensure decrypted content is never placed in URLs, logs, or telemetry
+- Be aware that message IDs in URL paths may appear in access logs (see Known Trade-offs)
 
 ## Testing Strategy
 
@@ -256,11 +326,25 @@ Backend behavior:
 - inspect logs to confirm no fragment or plaintext leakage
 - verify cache and referrer headers
 
+## Resolved Implementation Decisions
+
+- **In-browser KDF**: `PBKDF2` via Web Crypto for v1; upgrade to `Argon2id` via WASM in a future version
+- **Key wrapping**: `AES-KW` via Web Crypto
+- **Ciphertext integrity**: wrapped content key included as AES-GCM AAD
+- **PIN in KDF**: PIN is concatenated with passphrase as KDF input for two-factor decryption
+- **Payload transfer**: `multipart/form-data` for create; JSON with base64 for retrieve response
+- **File metadata**: encrypted inside the payload; server only knows `payloadType`
+- **PIN on create**: raw PIN sent over HTTPS; server derives Argon2id verifier
+- **TTL presets**: `15m` (default) / `30m` / `1h` / custom (`1 min` to `24 hours`)
+- **Diceware wordlist**: EFF large wordlist (`7776` words)
+
 ## Open Implementation Decisions
 
-- choose final in-browser KDF: `Argon2id` helper vs simpler Web Crypto native fallback
-- choose backend runtime shape: single instance only for v1 or Redis-backed ephemeral storage soon after
-- decide whether create and retrieve encrypted payload transfer should use JSON with base64 or multipart/binary payloads
+- Choose backend runtime shape: single instance only for v1 or Redis-backed ephemeral storage soon after
+- Define specific PBKDF2 iteration count (minimum `600,000` for SHA-256; benchmark on target browsers)
+- Define Argon2id parameters for server-side PIN verification
+- Define concrete rate limit values for create and retrieve endpoints
+- Define maximum total stored messages and bytes for memory cap
 
 ## v1 Recommendation
 
