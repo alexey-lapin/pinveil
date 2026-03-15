@@ -29,13 +29,15 @@ providing the correct PIN. Plaintext must never cross the network.
 3. User enters a `6` digit PIN.
 4. User selects a TTL preset from the UI.
 5. User clicks `Generate secure link`.
-6. Browser generates the message id, passphrase, salts, IV, and a random content key.
+6. Browser generates a passphrase, salts, IV, and a random content key.
 7. Browser derives a key-encryption key from the passphrase and PIN using `PBKDF2`.
-8. Browser encrypts the payload with `AES-GCM`, using the wrapped content key as additional authenticated data (AAD).
-9. Browser wraps the content key with the passphrase-derived key using `AES-KW`.
-10. Browser sends the encrypted payload, wrapped key, crypto metadata, and raw PIN as form data to the backend.
-11. Backend derives and stores a PIN verifier, stores the encrypted record in memory.
-12. Browser displays the final share URL.
+8. Browser wraps the content key with the passphrase-derived key using `AES-KW`.
+9. Browser encrypts the payload with `AES-GCM`, using the wrapped content key as additional authenticated data (AAD).
+10. Browser packs the wrapped key, crypto metadata, and ciphertext into a single opaque blob.
+11. Browser sends the raw PIN, TTL, and blob as form data to the backend.
+12. Backend generates the message id, derives and stores a PIN verifier, stores the blob as opaque bytes in memory.
+13. Backend returns the generated message id and expiry timestamp.
+14. Browser builds and displays the final share URL using the server-returned id and the local passphrase.
 
 ### Share
 
@@ -49,8 +51,10 @@ providing the correct PIN. Plaintext must never cross the network.
 3. Page prompts for the `6` digit PIN.
 4. Browser sends the id and PIN to the backend.
 5. Backend validates the message state and PIN attempt policy.
-6. If valid, backend returns the encrypted package and deletes the message immediately.
-7. Browser decrypts locally with the fragment passphrase and renders the text or triggers file download.
+6. If valid, backend returns the opaque blob as raw bytes and deletes the message immediately.
+7. Browser unpacks the blob to extract the wrapped key, crypto metadata, and ciphertext.
+8. Browser derives the KEK from the passphrase and PIN, unwraps the CEK, decrypts the payload, and renders the
+   text or triggers file download.
 
 ## Security Model
 
@@ -64,7 +68,7 @@ providing the correct PIN. Plaintext must never cross the network.
 
 - Plaintext never leaves the browser
 - The server never receives the URL fragment passphrase
-- The server stores only ciphertext, crypto metadata, and verification data needed for policy enforcement
+- The server stores only an opaque encrypted blob and verification data needed for policy enforcement
 - Decryption requires both the passphrase (from the URL fragment) and the PIN, making it two-factor
 - Successful retrieval deletes the message immediately
 - `3` failed PIN attempts delete the message by default, with the threshold configurable on the server side
@@ -100,7 +104,34 @@ providing the correct PIN. Plaintext must never cross the network.
 - Wrap the CEK with the KEK using `AES-KW` (RFC 3394, available in Web Crypto)
 - Encrypt the payload with `AES-GCM` using the CEK, including the wrapped CEK bytes as additional authenticated
   data (AAD) to bind the ciphertext and wrapped key together cryptographically
-- Upload the ciphertext, wrapped CEK, and crypto metadata to the backend
+- Pack the wrapped CEK, crypto metadata, and ciphertext into a single opaque blob and upload it to the backend
+- The server never parses the blob; it stores and returns it as raw bytes
+
+### Blob Format
+
+The client uses a two-layer envelope structure. Both layers use the same binary format:
+
+```
+[4 bytes: big-endian uint32 header length][JSON header bytes][raw body bytes]
+```
+
+**Outer layer (the blob stored by the server):**
+
+- JSON header contains the wrapped content key and all crypto parameters needed for decryption:
+  `wrappedContentKey`, `kdfSalt`, `iv`, `kdfAlgorithm`, `kdfIterations`, `encryptionAlgorithm`,
+  `wrappingAlgorithm`, `schemaVersion`
+- Body is the AES-GCM ciphertext
+
+The header is not encrypted. It contains only standard crypto parameters (salt, IV, algorithm identifiers) and
+the wrapped key, which is already encrypted under the KEK. None of these are secrets — the salt and IV provide
+uniqueness, not secrecy, and algorithm identifiers are public by Kerckhoffs's principle.
+
+**Inner layer (revealed after decryption):**
+
+- JSON header contains the payload type and optional file metadata: `type`, `name`, `mimeType`
+- Body is the raw content (UTF-8 text or file bytes)
+
+The server sees only the outer layer as an opaque blob. The inner layer is only accessible after decryption.
 
 ### KDF Choice
 
@@ -112,27 +143,17 @@ providing the correct PIN. Plaintext must never cross the network.
 ### Payload Handling
 
 - Text payloads are encrypted as UTF-8 bytes
-- File payloads are encrypted as raw bytes with file metadata (filename, MIME type) bundled inside the encrypted
-  payload so the server never sees them
-- The server knows only that the payload type is `file` and can infer approximate size from ciphertext length
-- The client reconstructs filename and MIME type after decryption to trigger the correct download
+- File payloads are encrypted as raw bytes with file metadata (filename, MIME type) bundled inside the inner
+  envelope so the server never sees them
+- The server does not know the payload type; it can only infer approximate size from the blob length
+- The client discovers the payload type after decryption by reading the inner envelope header
 
 ## Backend Data Model
 
 Each message record stored in memory contains:
 
 - `id`
-- `payloadType` (`text` or `file`)
-- `ciphertext` (includes encrypted file metadata for file payloads)
-- `wrappedContentKey`
-- `cryptoMetadata`:
-    - `kdfSalt` (random per-message salt for PBKDF2)
-    - `iv` (AES-GCM initialization vector)
-    - `kdfAlgorithm` (e.g. `PBKDF2-SHA-256`)
-    - `kdfIterations`
-    - `encryptionAlgorithm` (e.g. `AES-256-GCM`)
-    - `wrappingAlgorithm` (e.g. `AES-KW`)
-    - `schemaVersion` (for forward-compatible decryption)
+- `blob` (opaque bytes — the outer envelope containing wrapped key, crypto metadata, and ciphertext)
 - `pinVerifier`
 - `pinSalt` (per-message salt for Argon2id PIN verifier)
 - `expiresAt`
@@ -157,35 +178,29 @@ Request format: `multipart/form-data`
 
 Fields:
 
-- `id` (string)
-- `payloadType` (`text` or `file`)
-- `ciphertext` (binary part)
-- `wrappedContentKey` (base64 string)
-- `cryptoMetadata` (JSON string)
 - `pin` (raw `6` digit string; server derives and stores the verifier)
 - `ttl` (integer, seconds)
+- `blob` (binary part — opaque encrypted package, see Blob Format)
 
 Backend behavior:
 
-- validate id format
-- validate payload size against server maximum
-- validate payload type
+- generate a unique message id
+- validate blob size against server maximum
 - validate TTL against server policy (must be between `1 minute` and `24 hours`)
-- reject id collisions and let the client retry with a new id
 - derive and store PIN verifier using `Argon2id(pin + per-message salt + server pepper)`
-- return success plus canonical expiry timestamp
+- store the blob as opaque bytes
+- return the generated id and canonical expiry timestamp
 
 Success response (`201`):
 
 ```json
-{ "expiresAt": "2026-03-14T12:15:00Z" }
+{ "id": "amber-borrow-cliff-123456", "expiresAt": "2026-03-14T12:15:00Z" }
 ```
 
 Error responses:
 
-- `400` — invalid request (bad id format, unsupported payload type, TTL out of range)
-- `409` — id collision, client should retry with a new id
-- `413` — payload too large
+- `400` — invalid request (TTL out of range)
+- `413` — blob too large
 - `503` — server storage capacity reached
 
 All error responses use a consistent shape:
@@ -210,20 +225,14 @@ Backend behavior:
 - verify PIN against stored verifier
 - increment failed attempts on failure
 - delete the message if the failure threshold is reached
-- return encrypted package on success and delete the message immediately
+- return the blob on success and delete the message immediately
 
 Success response (`200`):
 
-```json
-{
-  "payloadType": "text",
-  "ciphertext": "<base64>",
-  "wrappedContentKey": "<base64>",
-  "cryptoMetadata": { ... }
-}
-```
+- Content-Type: `application/octet-stream`
+- Body: raw blob bytes
 
-Error responses:
+Error responses (JSON):
 
 - `403` — PIN verification failed (generic; does not reveal remaining attempts)
 - `404` — message not found, expired, already retrieved, or deleted due to failed attempts (generic; same
@@ -332,8 +341,12 @@ Error responses:
 - **Key wrapping**: `AES-KW` via Web Crypto
 - **Ciphertext integrity**: wrapped content key included as AES-GCM AAD
 - **PIN in KDF**: PIN is concatenated with passphrase as KDF input for two-factor decryption
-- **Payload transfer**: `multipart/form-data` for create; JSON with base64 for retrieve response
-- **File metadata**: encrypted inside the payload; server only knows `payloadType`
+- **Payload transfer**: `multipart/form-data` for create; raw `application/octet-stream` for retrieve response
+- **File metadata**: encrypted inside the inner envelope; server knows nothing about payload type or content
+- **Opaque blob**: the server stores a single opaque blob per message containing wrapped key, crypto metadata,
+  and ciphertext. The server never parses the blob. Create request sends only `pin`, `ttl`, and `blob`.
+- **Server-generated ID**: the server generates the message id using the EFF wordlist and returns it in the
+  create response. The client never generates or sends an id. No collision retry logic needed on the client.
 - **PIN on create**: raw PIN sent over HTTPS; server derives Argon2id verifier
 - **TTL presets**: `15m` (default) / `30m` / `1h` / custom (`1 min` to `24 hours`)
 - **Diceware wordlist**: EFF large wordlist (`7776` words)

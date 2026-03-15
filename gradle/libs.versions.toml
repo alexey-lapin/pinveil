@@ -1,2 +1,9 @@
 [versions]
 micronaut = "4.10.9"
+micronaut-plugin = "4.6.2"
+
+[plugins]
+micronaut-aot = { id = "io.micronaut.aot", version.ref = "micronaut-plugin" }
+micronaut-application = { id = "io.micronaut.application", version.ref = "micronaut-plugin" }
+release = { id = "pl.allegro.tech.build.axion-release", version = "1.21.1" }
+shadow = { id = "com.gradleup.shadow", version = "9.4.0" }

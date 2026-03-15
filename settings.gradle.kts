@@ -4,4 +4,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "kefir"
+rootProject.name = "pinveil"

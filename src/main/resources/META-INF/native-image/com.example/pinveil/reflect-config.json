@@ -1,0 +1,16 @@
+[
+  {
+    "name": "gg.jte.generated.precompiled.JteindexGenerated",
+    "methods": [
+      { "name": "render", "parameterTypes": ["gg.jte.html.HtmlTemplateOutput", "gg.jte.html.HtmlInterceptor", "java.lang.String", "long"] },
+      { "name": "renderMap", "parameterTypes": ["gg.jte.html.HtmlTemplateOutput", "gg.jte.html.HtmlInterceptor", "java.util.Map"] }
+    ]
+  },
+  {
+    "name": "gg.jte.generated.precompiled.JtemessageGenerated",
+    "methods": [
+      { "name": "render", "parameterTypes": ["gg.jte.html.HtmlTemplateOutput", "gg.jte.html.HtmlInterceptor", "java.lang.String", "java.lang.String"] },
+      { "name": "renderMap", "parameterTypes": ["gg.jte.html.HtmlTemplateOutput", "gg.jte.html.HtmlInterceptor", "java.util.Map"] }
+    ]
+  }
+]
