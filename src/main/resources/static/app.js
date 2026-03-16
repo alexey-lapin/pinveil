@@ -111,11 +111,10 @@ function initRetrievePage() {
             validatePin(pin);
 
             const response = await fetch(`/api/messages/${encodeURIComponent(messageId)}/retrieve`, {
-                method: "POST",
+                method: "GET",
                 headers: {
-                    "Content-Type": "application/json"
+                    "X-Message-Pin": pin
                 },
-                body: JSON.stringify({ pin }),
                 cache: "no-store"
             });
 

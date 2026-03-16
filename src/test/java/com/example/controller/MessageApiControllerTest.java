@@ -44,8 +44,8 @@ class MessageApiControllerTest {
         assertTrue(messageId.matches("^[a-z]+-[a-z]+-[a-z]+-\\d{6}$"));
 
         HttpResponse<byte[]> retrieveResponse = client.toBlocking().exchange(
-            HttpRequest.POST("/api/messages/" + messageId + "/retrieve", "{\"pin\":\"654321\"}")
-                .contentType(MediaType.APPLICATION_JSON_TYPE),
+            HttpRequest.GET("/api/messages/" + messageId + "/retrieve")
+                .header("X-Message-Pin", "654321"),
             byte[].class
         );
 
@@ -56,8 +56,8 @@ class MessageApiControllerTest {
         HttpClientResponseException exception = assertThrows(
             HttpClientResponseException.class,
             () -> client.toBlocking().exchange(
-                HttpRequest.POST("/api/messages/" + messageId + "/retrieve", "{\"pin\":\"654321\"}")
-                    .contentType(MediaType.APPLICATION_JSON_TYPE),
+                HttpRequest.GET("/api/messages/" + messageId + "/retrieve")
+                    .header("X-Message-Pin", "654321"),
                 byte[].class
             )
         );

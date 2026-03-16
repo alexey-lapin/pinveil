@@ -2,7 +2,6 @@ package com.example.controller;
 
 import com.example.model.CreateMessageResponse;
 import com.example.model.ErrorResponse;
-import com.example.model.RetrieveMessageRequest;
 import com.example.service.MessageService;
 import com.example.service.RateLimitService;
 import io.micronaut.http.HttpRequest;
@@ -12,8 +11,10 @@ import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Error;
+import io.micronaut.http.annotation.Header;
 import io.micronaut.http.annotation.Part;
 import io.micronaut.http.annotation.PathVariable;
+import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Post;
 import io.micronaut.http.multipart.CompletedFileUpload;
 import io.micronaut.http.exceptions.HttpStatusException;
@@ -47,10 +48,10 @@ public class MessageApiController {
         return HttpResponse.created(new CreateMessageResponse(result.id(), result.expiresAt()));
     }
 
-    @Post(uri = "/{id}/retrieve", consumes = MediaType.APPLICATION_JSON, produces = MediaType.APPLICATION_OCTET_STREAM)
-    public HttpResponse<byte[]> retrieve(HttpRequest<?> request, @PathVariable String id, @Body RetrieveMessageRequest retrieveRequest) {
+    @Get(uri = "/{id}/retrieve", produces = MediaType.APPLICATION_OCTET_STREAM)
+    public HttpResponse<byte[]> retrieve(HttpRequest<?> request, @PathVariable String id, @Header("X-Message-Pin") String pin) {
         enforceRateLimit(request, false);
-        byte[] blob = messageService.retrieve(id, retrieveRequest.pin());
+        byte[] blob = messageService.retrieve(id, pin);
         return HttpResponse.ok(blob).contentType(MediaType.APPLICATION_OCTET_STREAM_TYPE);
     }
 
