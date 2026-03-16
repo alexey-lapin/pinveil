@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.micronaut.aot)
     alias(libs.plugins.shadow)
     alias(libs.plugins.release)
-    id("gg.jte.gradle") version "3.2.1"
+    id("gg.jte.gradle") version "3.2.3"
 }
 
 version = scmVersion.version
