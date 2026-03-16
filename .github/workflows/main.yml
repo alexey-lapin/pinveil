@@ -1,0 +1,208 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - '*'
+
+env:
+  APP_NAME: ${{ github.event.repository.name }}
+  CR_REGISTRY: ghcr.io
+  CR_NAMESPACE: ${{ github.repository_owner }}
+  CR_USERNAME: ${{ github.actor }}
+  CR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build-jvm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 25
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Gradle build
+        run: ./gradlew build
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir /tmp/app-jar
+          cp build/libs/${{ env.APP_NAME }}*-dist.jar /tmp/app-jar
+          cd /tmp/app-jar
+          mv *.jar $(basename *.jar -dist.jar).jar
+
+      - name: Upload app-jar
+        uses: actions/upload-artifact@v5
+        with:
+          name: app-jar
+          path: |
+            /tmp/app-jar/*.jar
+          retention-days: 7
+
+  build-native:
+    strategy:
+      matrix:
+        include:
+          - name: linux-amd
+            os: ubuntu-22.04
+            artifact: app-native-linux-amd64
+          - name: linux-arm
+            os: ubuntu-22.04-arm
+            artifact: app-native-linux-arm64
+          - name: windows
+            os: windows-latest
+            artifact: app-native-windows-amd64
+          - name: macos
+            os: macos-latest
+            artifact: app-native-macos-arm64
+    runs-on: ${{ matrix.os }}
+    name: build-native-${{ matrix.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: 25
+          distribution: liberica
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Gradle nativeCompile
+        run: ./gradlew nativeCompile -x check
+        env:
+          # Needed for Windows; to resolve issue with temp folder during native image build, due to relativization
+          # problem when different drives are used, such as in GHA runners.
+          # https://github.com/graalvm/native-build-tools/issues/754
+          GRADLE_OPTS: -Djava.io.tmpdir=${{ runner.temp }}
+
+      - name: Prepare Artifacts
+        shell: bash
+        run: |
+          mkdir "${{ runner.temp }}/${{ matrix.artifact }}"
+          cp build/native/nativeCompile/${{ env.APP_NAME }}* "${{ runner.temp }}/${{ matrix.artifact }}"
+          cp build/native/nativeCompile/gradle-artifact.txt "${{ runner.temp }}/${{ matrix.artifact }}"
+
+      - name: Upload app-native
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.artifact }}/*
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-jvm, build-native]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v6
+
+      - name: Prepare Linux Artifacts
+        run: |
+          cd app-native-linux-amd64
+          chmod +x ${{ env.APP_NAME }}
+          tar -czf $(cat gradle-artifact.txt).tar.gz ${{ env.APP_NAME }}
+
+      - name: Prepare Linux Artifacts
+        run: |
+          cd app-native-linux-arm64
+          chmod +x ${{ env.APP_NAME }}
+          tar -czf $(cat gradle-artifact.txt).tar.gz ${{ env.APP_NAME }}
+
+      - name: Prepare macOS Artifacts
+        run: |
+          cd app-native-macos-arm64
+          chmod +x ${{ env.APP_NAME }}
+          tar -czf $(cat gradle-artifact.txt).tar.gz ${{ env.APP_NAME }}
+
+      - name: Prepare Windows Artifacts
+        run: |
+          cd app-native-windows-amd64
+          zip $(cat gradle-artifact.txt).zip ${{ env.APP_NAME }}.exe  
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          gh release create ${{ github.ref_name }}
+          app-jar/*.jar
+          app-native-linux-amd64/*.tar.gz
+          app-native-linux-arm64/*.tar.gz
+          app-native-macos-arm64/*.tar.gz
+          app-native-windows-amd64/*.zip
+          --title ${{ github.ref_name }}
+          --generate-notes
+          --fail-on-no-commits
+
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [build-native]
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.CR_REGISTRY }}
+          username: ${{ env.CR_USERNAME }}
+          password: ${{ env.CR_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          file: Dockerfile.native
+          context: .
+          build-args: |
+            APP_NAME=${{ env.APP_NAME }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
