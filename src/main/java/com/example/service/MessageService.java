@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
 
 @Singleton
 public class MessageService {
+
     private static final Pattern PIN_PATTERN = Pattern.compile("^\\d{6}$");
     private static final int MAX_ID_ATTEMPTS = 10;
 
@@ -53,12 +54,12 @@ public class MessageService {
         String pinVerifier = pinVerifierService.hash(command.pin(), pinSalt);
 
         StoredMessage storedMessage = new StoredMessage(
-            id,
-            command.blob().clone(),
-            pinVerifier,
-            pinSalt,
-            expiresAt,
-            now
+                id,
+                command.blob().clone(),
+                pinVerifier,
+                pinSalt,
+                expiresAt,
+                now
         );
 
         messages.put(id, storedMessage);
@@ -163,13 +164,18 @@ public class MessageService {
     }
 
     public record CreateCommand(
-        byte[] blob,
-        String pin,
-        long ttlSeconds
+            byte[] blob,
+            String pin,
+            long ttlSeconds
     ) {
+
     }
 
-    public record CreateResult(String id, Instant expiresAt) {
+    public record CreateResult(
+            String id,
+            Instant expiresAt
+    ) {
+
     }
 
     public enum MessageError {
@@ -181,6 +187,7 @@ public class MessageService {
     }
 
     public static final class MessageException extends RuntimeException {
+
         private final MessageError error;
 
         public MessageException(MessageError error, String message) {
@@ -191,5 +198,7 @@ public class MessageService {
         public MessageError error() {
             return error;
         }
+
     }
+
 }

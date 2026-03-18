@@ -7,6 +7,7 @@ import java.util.List;
 
 @ConfigurationProperties("app.messages")
 public class MessageConfiguration {
+
     private Duration minTtl = Duration.ofMinutes(1);
 
     private Duration maxTtl = Duration.ofHours(24);
@@ -106,4 +107,5 @@ public class MessageConfiguration {
     public void setPinPepper(String pinPepper) {
         this.pinPepper = pinPepper;
     }
+
 }

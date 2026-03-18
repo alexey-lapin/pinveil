@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
 
 @Singleton
 public class DicewareService {
+
     private static final int MESSAGE_ID_WORD_COUNT = 3;
     private static final int PASSPHRASE_WORD_COUNT = 4;
 
@@ -37,8 +38,8 @@ public class DicewareService {
 
     private List<String> randomWords(int count) {
         return secureRandom.ints(count, 0, words.size())
-            .mapToObj(words::get)
-            .collect(Collectors.toList());
+                .mapToObj(words::get)
+                .collect(Collectors.toList());
     }
 
     private List<String> loadWords() {
@@ -49,12 +50,12 @@ public class DicewareService {
 
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             List<String> loadedWords = reader.lines()
-                .map(String::trim)
-                .filter(line -> !line.isEmpty())
-                .map(line -> line.split("\\s+", 2))
-                .filter(parts -> parts.length == 2)
-                .map(parts -> parts[1])
-                .toList();
+                    .map(String::trim)
+                    .filter(line -> !line.isEmpty())
+                    .map(line -> line.split("\\s+", 2))
+                    .filter(parts -> parts.length == 2)
+                    .map(parts -> parts[1])
+                    .toList();
 
             if (loadedWords.size() != 7776) {
                 throw new IllegalStateException("Expected 7776 diceware words but found " + loadedWords.size());
@@ -64,4 +65,5 @@ public class DicewareService {
             throw new IllegalStateException("Failed to load EFF wordlist", exception);
         }
     }
+
 }

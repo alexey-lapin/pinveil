@@ -3,6 +3,7 @@ package com.example.model;
 import java.time.Instant;
 
 public class StoredMessage {
+
     private final String id;
     private final byte[] blob;
     private final String pinVerifier;
@@ -12,12 +13,12 @@ public class StoredMessage {
     private int failedPinAttempts;
 
     public StoredMessage(
-        String id,
-        byte[] blob,
-        String pinVerifier,
-        String pinSalt,
-        Instant expiresAt,
-        Instant createdAt
+            String id,
+            byte[] blob,
+            String pinVerifier,
+            String pinSalt,
+            Instant expiresAt,
+            Instant createdAt
     ) {
         this.id = id;
         this.blob = blob;
@@ -63,4 +64,5 @@ public class StoredMessage {
     public long sizeInBytes() {
         return blob.length;
     }
+
 }

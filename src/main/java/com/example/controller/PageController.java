@@ -4,14 +4,13 @@ import com.example.config.MessageConfiguration;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.views.View;
-import jakarta.inject.Singleton;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 
 @Controller
 public class PageController {
+
     private final MessageConfiguration configuration;
 
     public PageController(MessageConfiguration configuration) {
@@ -22,8 +21,8 @@ public class PageController {
     @Get("/")
     public Map<String, Object> index() {
         return Map.of(
-            "clientConfigJson", clientConfigJson(),
-            "defaultTtlSeconds", configuration.getDefaultTtl().toSeconds()
+                "clientConfigJson", clientConfigJson(),
+                "defaultTtlSeconds", configuration.getDefaultTtl().toSeconds()
         );
     }
 
@@ -31,33 +30,33 @@ public class PageController {
     @Get("/message/{id}")
     public Map<String, Object> message(String id) {
         return Map.of(
-            "messageId", id,
-            "clientConfigJson", clientConfigJson()
+                "messageId", id,
+                "clientConfigJson", clientConfigJson()
         );
     }
 
     private String clientConfigJson() {
         String ttlPresets = configuration.getTtlPresets().stream()
-            .map(this::ttlPresetJson)
-            .reduce((left, right) -> left + "," + right)
-            .orElse("");
+                .map(this::ttlPresetJson)
+                .reduce((left, right) -> left + "," + right)
+                .orElse("");
 
         return "{" +
-            "\"maxPayloadBytes\":" + configuration.getMaxPayloadBytes() + "," +
-            "\"pbkdf2Iterations\":" + configuration.getPbkdf2Iterations() + "," +
-            "\"minTtlSeconds\":" + configuration.getMinTtl().toSeconds() + "," +
-            "\"maxTtlSeconds\":" + configuration.getMaxTtl().toSeconds() + "," +
-            "\"defaultTtlSeconds\":" + configuration.getDefaultTtl().toSeconds() + "," +
-            "\"ttlPresets\": [" + ttlPresets + "]" +
-            "}";
+               "\"maxPayloadBytes\":" + configuration.getMaxPayloadBytes() + "," +
+               "\"pbkdf2Iterations\":" + configuration.getPbkdf2Iterations() + "," +
+               "\"minTtlSeconds\":" + configuration.getMinTtl().toSeconds() + "," +
+               "\"maxTtlSeconds\":" + configuration.getMaxTtl().toSeconds() + "," +
+               "\"defaultTtlSeconds\":" + configuration.getDefaultTtl().toSeconds() + "," +
+               "\"ttlPresets\": [" + ttlPresets + "]" +
+               "}";
     }
 
     private String ttlPresetJson(Duration duration) {
         long seconds = duration.toSeconds();
         return "{" +
-            "\"seconds\":" + seconds + "," +
-            "\"label\":\"" + ttlLabel(duration) + "\"" +
-            "}";
+               "\"seconds\":" + seconds + "," +
+               "\"label\":\"" + ttlLabel(duration) + "\"" +
+               "}";
     }
 
     private String ttlLabel(Duration duration) {
@@ -69,4 +68,5 @@ public class PageController {
         }
         return duration.toSeconds() + " seconds";
     }
+
 }

@@ -7,6 +7,7 @@ import jakarta.inject.Singleton;
 
 @Singleton
 public class PinVerifierService {
+
     private static final int ITERATIONS = 3;
     private static final int MEMORY_KIB = 19_456;
     private static final int PARALLELISM = 1;
@@ -40,4 +41,5 @@ public class PinVerifierService {
     private char[] combinedInput(String pin, String pinSalt) {
         return (pin + ":" + pinSalt + ":" + configuration.getPinPepper()).toCharArray();
     }
+
 }

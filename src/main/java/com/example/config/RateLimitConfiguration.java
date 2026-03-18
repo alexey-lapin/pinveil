@@ -6,6 +6,7 @@ import java.time.Duration;
 
 @ConfigurationProperties("app.rate-limit")
 public class RateLimitConfiguration {
+
     private Duration window = Duration.ofMinutes(1);
 
     private int createRequestsPerWindow = 10;
@@ -35,4 +36,5 @@ public class RateLimitConfiguration {
     public void setRetrieveRequestsPerWindow(int retrieveRequestsPerWindow) {
         this.retrieveRequestsPerWindow = retrieveRequestsPerWindow;
     }
+
 }

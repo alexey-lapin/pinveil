@@ -10,6 +10,7 @@ import java.util.Map;
 
 @Singleton
 public class RateLimitService {
+
     private final RateLimitConfiguration configuration;
     private final Map<String, Counter> counters = new HashMap<>();
 
@@ -51,6 +52,7 @@ public class RateLimitService {
     }
 
     private static final class Counter {
+
         private final Instant windowEndsAt;
         private int count;
 
@@ -70,5 +72,7 @@ public class RateLimitService {
         private void increment() {
             count++;
         }
+
     }
+
 }
