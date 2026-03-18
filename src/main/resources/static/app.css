@@ -108,6 +108,14 @@ small {
     color: var(--ink-soft);
 }
 
+.form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
 .form-header h2,
 .result-header h2,
 .output-card h2 {
@@ -133,7 +141,7 @@ small {
 .mode-switch {
     display: inline-flex;
     gap: 8px;
-    margin: 18px 0 20px;
+    flex-shrink: 0;
     padding: 6px;
     border-radius: 999px;
     background: rgba(16, 33, 43, 0.05);
@@ -163,6 +171,7 @@ small {
     display: grid;
     gap: 10px;
     margin: 16px 0;
+    align-content: start;
 }
 
 .field span {
@@ -183,9 +192,33 @@ select {
     color: var(--ink);
 }
 
+select {
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 40px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2310212b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    cursor: pointer;
+}
+
 textarea {
     resize: vertical;
-    min-height: 160px;
+    min-height: 120px;
+}
+
+#text-field,
+#file-field {
+    grid-template-rows: auto 180px;
+}
+
+#messageText {
+    height: 100%;
+    resize: none;
+}
+
+#file-field .file-drop {
+    height: 100%;
 }
 
 input:focus,
@@ -247,6 +280,112 @@ textarea:focus {
 
 .hidden {
     display: none !important;
+}
+
+/* Custom file drop zone */
+.file-drop {
+    position: relative;
+    height: 180px;
+    border-radius: 18px;
+    border: 1.5px dashed rgba(16, 33, 43, 0.22);
+    background: var(--surface-strong);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 160ms ease, background 160ms ease;
+    overflow: hidden;
+}
+
+.file-drop:hover {
+    border-color: rgba(200, 109, 61, 0.45);
+    background: rgba(200, 109, 61, 0.04);
+}
+
+.file-drop.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-fade);
+}
+
+.file-input-hidden {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    border: none !important;
+    background: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    outline: none !important;
+}
+
+.file-drop-idle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+    pointer-events: none;
+    color: var(--ink-soft);
+}
+
+.file-drop-idle svg {
+    opacity: 0.45;
+    margin-bottom: 2px;
+}
+
+.file-drop-idle p {
+    margin: 0;
+    font-size: 0.98rem;
+}
+
+.file-drop-idle strong {
+    color: var(--accent-deep);
+}
+
+.file-drop-idle small {
+    font-size: 0.82rem;
+}
+
+.file-drop-chosen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    text-align: center;
+    pointer-events: none;
+    color: var(--accent-deep);
+}
+
+.file-chosen-name {
+    font-family: "Menlo", "Consolas", monospace;
+    font-size: 0.88rem;
+    color: var(--ink);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-clear-btn {
+    pointer-events: all;
+    padding: 5px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface-strong);
+    font-size: 0.8rem;
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-family: "Menlo", "Consolas", monospace;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.file-clear-btn:hover {
+    background: rgba(157, 47, 47, 0.08);
+    border-color: rgba(157, 47, 47, 0.28);
+    color: var(--danger);
 }
 
 .compact textarea {

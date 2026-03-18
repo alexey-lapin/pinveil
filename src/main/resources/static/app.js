@@ -25,6 +25,7 @@ function initCreatePage() {
 
     populateTtlOptions(ttlPreset);
     bindModeSwitcher(modeButtons);
+    initFileDrop();
 
     ttlPreset.addEventListener("change", () => {
         customTtlField.classList.toggle("hidden", ttlPreset.value !== "custom");
@@ -151,6 +152,56 @@ function populateTtlOptions(select) {
     customOption.value = "custom";
     customOption.textContent = "Custom";
     select.append(customOption);
+}
+
+function initFileDrop() {
+    const fileInput = document.getElementById("messageFile");
+    const dropZone = document.getElementById("file-drop");
+    const idleView = document.getElementById("file-drop-idle");
+    const chosenView = document.getElementById("file-drop-chosen");
+    const chosenName = document.getElementById("chosen-file-name");
+    const clearBtn = document.getElementById("file-clear-btn");
+
+    function showFile(name) {
+        chosenName.textContent = name;
+        idleView.classList.add("hidden");
+        chosenView.classList.remove("hidden");
+    }
+
+    function clearFile() {
+        fileInput.value = "";
+        idleView.classList.remove("hidden");
+        chosenView.classList.add("hidden");
+    }
+
+    fileInput.addEventListener("change", () => {
+        if (fileInput.files[0]) showFile(fileInput.files[0].name);
+    });
+
+    clearBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        clearFile();
+    });
+
+    dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("drag-over");
+    });
+
+    dropZone.addEventListener("dragleave", (e) => {
+        if (!dropZone.contains(e.relatedTarget)) {
+            dropZone.classList.remove("drag-over");
+        }
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("drag-over");
+        if (e.dataTransfer.files[0]) {
+            fileInput.files = e.dataTransfer.files;
+            showFile(e.dataTransfer.files[0].name);
+        }
+    });
 }
 
 function bindModeSwitcher(modeButtons) {

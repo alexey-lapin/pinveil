@@ -16,25 +16,41 @@
             <div id="create-inputs">
                 <div class="form-header">
                     <h2>Create secure link</h2>
-                    <p>Encrypt text or a file in the browser, then share the generated one-time link and PIN separately.</p>
-                </div>
-
-                <div class="mode-switch" role="tablist" aria-label="Payload type">
-                    <button type="button" class="mode-chip is-active" data-mode="text">Text</button>
-                    <button type="button" class="mode-chip" data-mode="file">File</button>
+                    <div class="mode-switch" role="tablist" aria-label="Payload type">
+                        <button type="button" class="mode-chip is-active" data-mode="text">Text</button>
+                        <button type="button" class="mode-chip" data-mode="file">File</button>
+                    </div>
                 </div>
 
                 <input type="hidden" id="payloadType" name="payloadType" value="text">
 
                 <label class="field" id="text-field">
                     <span>Secret text</span>
-                    <textarea id="messageText" rows="10" placeholder="Paste a note, key, or anything else that should only be read once."></textarea>
+                    <textarea id="messageText" placeholder="Paste a note, key, or anything else that should only be read once."></textarea>
                 </label>
 
                 <label class="field hidden" id="file-field">
                     <span>Single file</span>
-                    <input id="messageFile" type="file">
-                    <small>Up to 25 MB. File name and MIME type are encrypted inside the payload.</small>
+                    <div class="file-drop" id="file-drop">
+                        <input id="messageFile" type="file" class="file-input-hidden">
+                        <div class="file-drop-idle" id="file-drop-idle">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            <p>Drop a file here or <strong>browse</strong></p>
+                            <small>Up to 25 MB · name and type are encrypted</small>
+                        </div>
+                        <div class="file-drop-chosen hidden" id="file-drop-chosen">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                            <span class="file-chosen-name" id="chosen-file-name"></span>
+                            <button type="button" class="file-clear-btn" id="file-clear-btn">Remove</button>
+                        </div>
+                    </div>
                 </label>
 
                 <div class="grid two-up">
