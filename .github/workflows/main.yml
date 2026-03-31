@@ -47,7 +47,7 @@ jobs:
           mv *.jar $(basename *.jar -dist.jar).jar
 
       - name: Upload app-jar
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: app-jar
           path: |
@@ -105,7 +105,7 @@ jobs:
           cp build/native/nativeCompile/gradle-artifact.txt "${{ runner.temp }}/${{ matrix.artifact }}"
 
       - name: Upload app-native
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -122,7 +122,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
 
       - name: Prepare Linux Artifacts
         run: |
@@ -170,7 +170,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
