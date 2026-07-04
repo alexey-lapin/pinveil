@@ -44,17 +44,18 @@ public class MessageService {
     }
 
     public synchronized CreateResult create(CreateCommand command) {
-        Instant now = Instant.now();
-        store.removeExpired(now);
         validateCreateCommand(command);
-        enforceCapacity(command.blob().length);
 
         String id = generateUniqueId();
-        Instant expiresAt = now.plusSeconds(command.ttlSeconds());
+        Instant expiresAt = Instant.now().plusSeconds(command.ttlSeconds());
         String pinSalt = randomBase64(PIN_SALT_BYTES);
         String pinVerifierHash = pinVerifier.hash(command.pin(), pinSalt);
 
-        store.save(new StoredMessage(id, command.blob().clone(), pinVerifierHash, pinSalt, expiresAt));
+        try {
+            store.save(new StoredMessage(id, command.blob().clone(), pinVerifierHash, pinSalt, expiresAt));
+        } catch (MessageStoreException exception) {
+            throw new MessageException(MessageError.CAPACITY_REACHED, "Server storage capacity reached");
+        }
         return new CreateResult(id, expiresAt);
     }
 
@@ -63,12 +64,9 @@ public class MessageService {
             throw new MessageException(MessageError.INVALID_REQUEST, "Invalid PIN format");
         }
 
-        Instant now = Instant.now();
-        store.removeExpired(now);
-
         StoredMessage message = store.find(id)
                 .orElseThrow(() -> new MessageException(MessageError.NOT_FOUND, "Message not found"));
-        if (message.isExpiredAt(now)) {
+        if (message.isExpiredAt(Instant.now())) {
             store.remove(id);
             throw new MessageException(MessageError.NOT_FOUND, "Message not found");
         }
@@ -85,8 +83,7 @@ public class MessageService {
         return message.getBlob();
     }
 
-    public synchronized int storedMessageCount() {
-        store.removeExpired(Instant.now());
+    public int storedMessageCount() {
         return store.count();
     }
 
@@ -104,13 +101,6 @@ public class MessageService {
         Duration ttl = Duration.ofSeconds(command.ttlSeconds());
         if (ttl.compareTo(policy.getMinTtl()) < 0 || ttl.compareTo(policy.getMaxTtl()) > 0) {
             throw new MessageException(MessageError.INVALID_REQUEST, "TTL is outside the allowed range");
-        }
-    }
-
-    private void enforceCapacity(long incomingBytes) {
-        if (store.count() >= policy.getMaxStoredMessages()
-                || store.storedBytes() + incomingBytes > policy.getMaxStoredBytes()) {
-            throw new MessageException(MessageError.CAPACITY_REACHED, "Server storage capacity reached");
         }
     }
 

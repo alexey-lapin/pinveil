@@ -17,8 +17,6 @@ public class MessagePolicyConfig {
     private Duration defaultTtl = Duration.ofMinutes(15);
     private List<Duration> ttlPresets = List.of(Duration.ofMinutes(15), Duration.ofMinutes(30), Duration.ofHours(1));
     private long maxPayloadBytes = 25L * 1024 * 1024;
-    private int maxStoredMessages = 1000;
-    private long maxStoredBytes = 256L * 1024 * 1024;
     private int pbkdf2Iterations = 600_000;
 
     public Duration getMinTtl() {
@@ -59,22 +57,6 @@ public class MessagePolicyConfig {
 
     public void setMaxPayloadBytes(long maxPayloadBytes) {
         this.maxPayloadBytes = maxPayloadBytes;
-    }
-
-    public int getMaxStoredMessages() {
-        return maxStoredMessages;
-    }
-
-    public void setMaxStoredMessages(int maxStoredMessages) {
-        this.maxStoredMessages = maxStoredMessages;
-    }
-
-    public long getMaxStoredBytes() {
-        return maxStoredBytes;
-    }
-
-    public void setMaxStoredBytes(long maxStoredBytes) {
-        this.maxStoredBytes = maxStoredBytes;
     }
 
     public int getPbkdf2Iterations() {

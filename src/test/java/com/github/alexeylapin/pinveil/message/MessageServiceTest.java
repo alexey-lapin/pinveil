@@ -126,11 +126,6 @@ class MessageServiceTest {
         }
 
         @Override
-        public long storedBytes() {
-            return messages.values().stream().mapToLong(StoredMessage::sizeInBytes).sum();
-        }
-
-        @Override
         public int removeExpired(Instant now) {
             int removed = 0;
             Iterator<StoredMessage> iterator = messages.values().iterator();
