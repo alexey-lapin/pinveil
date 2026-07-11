@@ -1,44 +1,27 @@
 package com.github.alexeylapin.pinveil.security;
 
-import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
-import de.mkammerer.argon2.Argon2;
-import de.mkammerer.argon2.Argon2Factory;
-import jakarta.inject.Singleton;
-
 /**
- * Hashes and verifies PINs with Argon2id, salted per message and peppered with a
- * server secret. Cost parameters come from {@link PinSecurityConfig}.
+ * Hashes and verifies PINs. Implementations choose the hashing scheme and cost.
  */
-@Singleton
-public class PinVerifier {
+public interface PinVerifier {
 
-    private final PinSecurityConfig config;
-    private final Argon2 argon2 = Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id);
+    /**
+     * Hashes a PIN into an opaque verifier that can later confirm the same PIN.
+     *
+     * @param pin     the PIN to protect.
+     * @param pinSalt a per-message salt.
+     * @return an opaque verifier string.
+     */
+    String hash(String pin, String pinSalt);
 
-    public PinVerifier(PinSecurityConfig config) {
-        this.config = config;
-    }
-
-    public String hash(String pin, String pinSalt) {
-        char[] input = combinedInput(pin, pinSalt);
-        try {
-            return argon2.hash(config.getArgon2Iterations(), config.getArgon2MemoryKib(), config.getArgon2Parallelism(), input);
-        } finally {
-            argon2.wipeArray(input);
-        }
-    }
-
-    public boolean verify(String pin, String pinSalt, String verifier) {
-        char[] input = combinedInput(pin, pinSalt);
-        try {
-            return argon2.verify(verifier, input);
-        } finally {
-            argon2.wipeArray(input);
-        }
-    }
-
-    private char[] combinedInput(String pin, String pinSalt) {
-        return (pin + ":" + pinSalt + ":" + config.getPepper()).toCharArray();
-    }
+    /**
+     * Checks a PIN against a previously produced verifier.
+     *
+     * @param pin      the PIN to check.
+     * @param pinSalt  the salt the verifier was produced with.
+     * @param verifier the stored verifier.
+     * @return {@code true} if the PIN and salt reproduce the verifier.
+     */
+    boolean verify(String pin, String pinSalt, String verifier);
 
 }
