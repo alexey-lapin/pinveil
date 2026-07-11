@@ -1,125 +1,36 @@
 package com.github.alexeylapin.pinveil.message;
 
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
-import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
-import com.github.alexeylapin.pinveil.passphrase.DicewareService;
-import com.github.alexeylapin.pinveil.security.PinVerifier;
-import jakarta.inject.Singleton;
-
-import java.security.SecureRandom;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Base64;
-import java.util.regex.Pattern;
-
 /**
- * Orchestrates the message lifecycle: validates input, enforces capacity policy,
- * and coordinates the {@link MessageStore}, {@link PinVerifier} and
- * {@link DicewareService}. All storage and byte accounting lives behind the store.
+ * Application service for the message lifecycle: create an encrypted message and
+ * retrieve it once with the correct PIN. Implementations own validation and the
+ * coordination of storage and PIN verification.
  */
-@Singleton
-public class MessageService {
+public interface MessageService {
 
-    private static final Pattern PIN_PATTERN = Pattern.compile("^\\d{6}$");
-    private static final int MAX_ID_ATTEMPTS = 10;
-    private static final int PIN_SALT_BYTES = 16;
+    /**
+     * Creates and stores a message from the given command.
+     *
+     * @param command the blob, PIN, and lifetime to store.
+     * @return the id and expiry of the stored message.
+     * @throws MessageException if the command is invalid or the store cannot accept it.
+     */
+    CreateResult create(CreateCommand command);
 
-    private final MessageStore store;
-    private final MessagePolicyConfig policy;
-    private final PinSecurityConfig pinSecurity;
-    private final PinVerifier pinVerifier;
-    private final DicewareService dicewareService;
-    private final SecureRandom secureRandom = new SecureRandom();
+    /**
+     * Retrieves and consumes the message with the given id. A successful call
+     * removes the message; failed PIN attempts are recorded and eventually burn it down.
+     *
+     * @param id  the message id.
+     * @param pin the six-digit PIN.
+     * @return the stored ciphertext blob.
+     * @throws MessageException if the PIN is malformed, the message is missing or expired,
+     *                          or the PIN does not match.
+     */
+    byte[] retrieve(String id, String pin);
 
-    public MessageService(MessageStore store,
-                          MessagePolicyConfig policy,
-                          PinSecurityConfig pinSecurity,
-                          PinVerifier pinVerifier,
-                          DicewareService dicewareService) {
-        this.store = store;
-        this.policy = policy;
-        this.pinSecurity = pinSecurity;
-        this.pinVerifier = pinVerifier;
-        this.dicewareService = dicewareService;
-    }
-
-    public synchronized CreateResult create(CreateCommand command) {
-        validateCreateCommand(command);
-
-        String id = generateUniqueId();
-        Instant expiresAt = Instant.now().plusSeconds(command.ttlSeconds());
-        String pinSalt = randomBase64(PIN_SALT_BYTES);
-        String pinVerifierHash = pinVerifier.hash(command.pin(), pinSalt);
-
-        try {
-            store.save(new StoredMessage(id, command.blob().clone(), pinVerifierHash, pinSalt, expiresAt));
-        } catch (MessageStoreException exception) {
-            throw new MessageException(MessageError.CAPACITY_REACHED, "Server storage capacity reached");
-        }
-        return new CreateResult(id, expiresAt);
-    }
-
-    public synchronized byte[] retrieve(String id, String pin) {
-        if (!isValidPin(pin)) {
-            throw new MessageException(MessageError.INVALID_REQUEST, "Invalid PIN format");
-        }
-
-        StoredMessage message = store.find(id)
-                .orElseThrow(() -> new MessageException(MessageError.NOT_FOUND, "Message not found"));
-        if (message.isExpiredAt(Instant.now())) {
-            store.remove(id);
-            throw new MessageException(MessageError.NOT_FOUND, "Message not found");
-        }
-
-        if (!pinVerifier.verify(pin, message.pinSalt(), message.pinVerifier())) {
-            StoredMessage attempted = message.withIncrementedFailedAttempts();
-            if (attempted.failedPinAttempts() >= pinSecurity.getMaxFailedAttempts()) {
-                store.remove(id);
-            } else {
-                store.save(attempted);
-            }
-            throw new MessageException(MessageError.FORBIDDEN, "Unable to retrieve message");
-        }
-
-        store.remove(id);
-        return message.blob();
-    }
-
-    public int storedMessageCount() {
-        return store.count();
-    }
-
-    public static boolean isValidPin(String pin) {
-        return pin != null && PIN_PATTERN.matcher(pin).matches();
-    }
-
-    private void validateCreateCommand(CreateCommand command) {
-        if (!isValidPin(command.pin())) {
-            throw new MessageException(MessageError.INVALID_REQUEST, "Invalid PIN format");
-        }
-        if (command.blob().length == 0 || command.blob().length > policy.getMaxPayloadBytes()) {
-            throw new MessageException(MessageError.PAYLOAD_TOO_LARGE, "Blob exceeds maximum size");
-        }
-        Duration ttl = Duration.ofSeconds(command.ttlSeconds());
-        if (ttl.compareTo(policy.getMinTtl()) < 0 || ttl.compareTo(policy.getMaxTtl()) > 0) {
-            throw new MessageException(MessageError.INVALID_REQUEST, "TTL is outside the allowed range");
-        }
-    }
-
-    private String generateUniqueId() {
-        for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
-            String id = dicewareService.generateMessageId();
-            if (!store.contains(id)) {
-                return id;
-            }
-        }
-        throw new MessageException(MessageError.CAPACITY_REACHED, "Unable to generate unique id");
-    }
-
-    private String randomBase64(int byteCount) {
-        byte[] bytes = new byte[byteCount];
-        secureRandom.nextBytes(bytes);
-        return Base64.getEncoder().encodeToString(bytes);
-    }
+    /**
+     * @return the number of messages currently stored.
+     */
+    int storedMessageCount();
 
 }

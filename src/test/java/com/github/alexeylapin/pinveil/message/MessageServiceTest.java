@@ -92,7 +92,7 @@ class MessageServiceTest {
         PinSecurityConfig pinSecurity = new PinSecurityConfig();
         pinSecurity.setPepper("test-pepper");
 
-        return new MessageService(new FakeMessageStore(), policy, pinSecurity, new PinVerifier(pinSecurity), new DicewareService());
+        return new DefaultMessageService(new FakeMessageStore(), policy, pinSecurity, new PinVerifier(pinSecurity), new DicewareService());
     }
 
     /** Minimal in-memory store so the service can be tested in isolation. */
