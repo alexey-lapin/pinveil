@@ -71,16 +71,18 @@ public class MessageService {
             throw new MessageException(MessageError.NOT_FOUND, "Message not found");
         }
 
-        if (!pinVerifier.verify(pin, message.getPinSalt(), message.getPinVerifier())) {
-            message.incrementFailedPinAttempts();
-            if (message.getFailedPinAttempts() >= pinSecurity.getMaxFailedAttempts()) {
+        if (!pinVerifier.verify(pin, message.pinSalt(), message.pinVerifier())) {
+            StoredMessage attempted = message.withIncrementedFailedAttempts();
+            if (attempted.failedPinAttempts() >= pinSecurity.getMaxFailedAttempts()) {
                 store.remove(id);
+            } else {
+                store.save(attempted);
             }
             throw new MessageException(MessageError.FORBIDDEN, "Unable to retrieve message");
         }
 
         store.remove(id);
-        return message.getBlob();
+        return message.blob();
     }
 
     public int storedMessageCount() {

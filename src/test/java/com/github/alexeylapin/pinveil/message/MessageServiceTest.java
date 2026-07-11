@@ -102,7 +102,7 @@ class MessageServiceTest {
 
         @Override
         public void save(StoredMessage message) {
-            messages.put(message.getId(), message);
+            messages.put(message.id(), message);
         }
 
         @Override

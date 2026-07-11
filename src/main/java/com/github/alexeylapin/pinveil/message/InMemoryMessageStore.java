@@ -36,7 +36,7 @@ public class InMemoryMessageStore implements MessageStore {
                 throw new MessageStoreException("In-memory store capacity reached");
             }
         }
-        StoredMessage previous = messages.put(message.getId(), message);
+        StoredMessage previous = messages.put(message.id(), message);
         if (previous != null) {
             storedBytes -= previous.sizeInBytes();
         }
@@ -85,7 +85,7 @@ public class InMemoryMessageStore implements MessageStore {
 
     /** Whether the store can hold {@code message} without exceeding its caps. */
     private boolean admits(StoredMessage message) {
-        StoredMessage existing = messages.get(message.getId());
+        StoredMessage existing = messages.get(message.id());
         int projectedCount = messages.size() + (existing == null ? 1 : 0);
         long projectedBytes = storedBytes + message.sizeInBytes() - (existing == null ? 0 : existing.sizeInBytes());
         return projectedCount <= config.getMaxMessages() && projectedBytes <= config.getMaxBytes();
