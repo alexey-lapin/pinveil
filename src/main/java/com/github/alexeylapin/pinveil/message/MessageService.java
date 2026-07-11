@@ -1,9 +1,9 @@
 package com.github.alexeylapin.pinveil.message;
 
 /**
- * Application service for the message lifecycle: create an encrypted message and
- * retrieve it once with the correct PIN. Implementations own validation and the
- * coordination of storage and PIN verification.
+ * Application service for the message lifecycle: create a message and retrieve it
+ * once with the correct PIN. Implementations own validation and the coordination
+ * of storage and PIN verification.
  */
 public interface MessageService {
 
@@ -17,14 +17,12 @@ public interface MessageService {
     CreateResult create(CreateCommand command);
 
     /**
-     * Retrieves and consumes the message with the given id. A successful call
-     * removes the message; failed PIN attempts are recorded and eventually burn it down.
+     * Retrieves and consumes the message with the given id: a successful retrieval removes it.
      *
      * @param id  the message id.
-     * @param pin the six-digit PIN.
-     * @return the stored ciphertext blob.
-     * @throws MessageException if the PIN is malformed, the message is missing or expired,
-     *                          or the PIN does not match.
+     * @param pin the PIN guarding the message.
+     * @return the stored blob.
+     * @throws MessageException if the PIN is rejected, or the message is missing or expired.
      */
     byte[] retrieve(String id, String pin);
 
