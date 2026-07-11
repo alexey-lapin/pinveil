@@ -1,8 +1,10 @@
 package com.github.alexeylapin.pinveil.message;
 
+import com.github.alexeylapin.pinveil.config.MessageIdConfig;
 import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
 import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
-import com.github.alexeylapin.pinveil.passphrase.DicewareService;
+import com.github.alexeylapin.pinveil.diceware.DefaultDicewareService;
+import com.github.alexeylapin.pinveil.diceware.DicewareIdGenerator;
 import com.github.alexeylapin.pinveil.security.PinVerifier;
 import org.junit.jupiter.api.Test;
 
@@ -92,7 +94,8 @@ class MessageServiceTest {
         PinSecurityConfig pinSecurity = new PinSecurityConfig();
         pinSecurity.setPepper("test-pepper");
 
-        return new DefaultMessageService(new FakeMessageStore(), policy, pinSecurity, new PinVerifier(pinSecurity), new DicewareService());
+        DicewareIdGenerator idGenerator = new DicewareIdGenerator(new DefaultDicewareService(), new MessageIdConfig());
+        return new DefaultMessageService(new FakeMessageStore(), policy, pinSecurity, new PinVerifier(pinSecurity), idGenerator);
     }
 
     /** Minimal in-memory store so the service can be tested in isolation. */

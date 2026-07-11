@@ -1,4 +1,4 @@
-package com.github.alexeylapin.pinveil.passphrase;
+package com.github.alexeylapin.pinveil.diceware;
 
 import jakarta.inject.Singleton;
 
@@ -11,40 +11,26 @@ import java.security.SecureRandom;
 import java.util.List;
 
 /**
- * Generates human-friendly identifiers and passphrases from the EFF large
- * wordlist using a cryptographically strong RNG.
+ * {@link DicewareService} backed by the EFF large wordlist, selecting words with a
+ * cryptographically strong RNG.
  */
 @Singleton
-public class DicewareService {
+public class DefaultDicewareService implements DicewareService {
 
     private static final int EFF_WORDLIST_SIZE = 7776;
-    private static final int MESSAGE_ID_WORD_COUNT = 3;
-    private static final int PASSPHRASE_WORD_COUNT = 4;
 
     private final SecureRandom secureRandom = new SecureRandom();
     private final List<String> words = loadWords();
 
-    public String generateMessageId() {
-        return String.join("-", randomWords(MESSAGE_ID_WORD_COUNT))
-                + "-" + String.format("%06d", secureRandom.nextInt(1_000_000));
-    }
-
-    public String generatePassphrase() {
-        return String.join("-", randomWords(PASSPHRASE_WORD_COUNT));
-    }
-
-    public int wordCount() {
-        return words.size();
-    }
-
-    private List<String> randomWords(int count) {
+    @Override
+    public List<String> words(int count) {
         return secureRandom.ints(count, 0, words.size())
                 .mapToObj(words::get)
                 .toList();
     }
 
     private List<String> loadWords() {
-        InputStream inputStream = DicewareService.class.getResourceAsStream("/static/eff_large_wordlist.txt");
+        InputStream inputStream = DefaultDicewareService.class.getResourceAsStream("/static/eff_large_wordlist.txt");
         if (inputStream == null) {
             throw new IllegalStateException("EFF wordlist is missing");
         }

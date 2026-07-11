@@ -2,7 +2,6 @@ package com.github.alexeylapin.pinveil.message;
 
 import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
 import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
-import com.github.alexeylapin.pinveil.passphrase.DicewareService;
 import com.github.alexeylapin.pinveil.security.PinVerifier;
 import jakarta.inject.Singleton;
 
@@ -10,12 +9,13 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
  * Default {@link MessageService} implementation. Validates input and coordinates
- * the {@link MessageStore}, {@link PinVerifier} and {@link DicewareService};
- * storage, byte accounting, and capacity live behind the store.
+ * the {@link MessageStore} and {@link PinVerifier}; message ids come from an
+ * injected generator, and storage, byte accounting, and capacity live behind the store.
  */
 @Singleton
 public class DefaultMessageService implements MessageService {
@@ -28,19 +28,19 @@ public class DefaultMessageService implements MessageService {
     private final MessagePolicyConfig policy;
     private final PinSecurityConfig pinSecurity;
     private final PinVerifier pinVerifier;
-    private final DicewareService dicewareService;
+    private final Supplier<String> idGenerator;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public DefaultMessageService(MessageStore store,
                                  MessagePolicyConfig policy,
                                  PinSecurityConfig pinSecurity,
                                  PinVerifier pinVerifier,
-                                 DicewareService dicewareService) {
+                                 Supplier<String> idGenerator) {
         this.store = store;
         this.policy = policy;
         this.pinSecurity = pinSecurity;
         this.pinVerifier = pinVerifier;
-        this.dicewareService = dicewareService;
+        this.idGenerator = idGenerator;
     }
 
     @Override
@@ -111,7 +111,7 @@ public class DefaultMessageService implements MessageService {
 
     private String generateUniqueId() {
         for (int attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
-            String id = dicewareService.generateMessageId();
+            String id = idGenerator.get();
             if (!store.contains(id)) {
                 return id;
             }
