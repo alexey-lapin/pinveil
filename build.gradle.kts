@@ -22,7 +22,6 @@ dependencies {
     implementation("io.micronaut:micronaut-runtime")
     implementation("io.micronaut.serde:micronaut-serde-jackson")
     implementation("io.micronaut.views:micronaut-views-jte")
-    implementation("io.micronaut.views:micronaut-views-htmx")
 
     runtimeOnly("ch.qos.logback:logback-classic")
 
@@ -32,7 +31,7 @@ dependencies {
 }
 
 application {
-    mainClass = "com.example.Application"
+    mainClass = "com.github.alexeylapin.pinveil.Application"
 }
 
 java {
@@ -55,7 +54,7 @@ micronaut {
     testRuntime("junit5")
     processing {
         incremental(true)
-        annotations("com.example.*")
+        annotations("com.github.alexeylapin.pinveil.*")
     }
     aot {
         // Please review carefully the optimizations enabled below
