@@ -1,6 +1,7 @@
 package com.github.alexeylapin.pinveil.boot;
 
 import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.core.bind.annotation.Bindable;
 
 /**
  * Binds {@code app.pin.*}: the secret pepper, Argon2 cost parameters, and how many
@@ -9,52 +10,23 @@ import io.micronaut.context.annotation.ConfigurationProperties;
  * only the verifier ever sees the pepper.
  */
 @ConfigurationProperties("app.pin")
-public class PinSecurityProperties {
+public interface PinSecurityProperties {
 
-    private String pepper = "";
-    private int maxFailedAttempts = 3;
-    private int argon2Iterations = 3;
-    private int argon2MemoryKib = 19_456;
-    private int argon2Parallelism = 1;
+    /** Empty when unset: the pepper is optional, and an absent one must not hash as "null". */
+    @Bindable(defaultValue = "")
+    String getPepper();
 
-    public String getPepper() {
-        return pepper;
-    }
+    @Bindable(defaultValue = "3")
+    int getMaxFailedAttempts();
 
-    public void setPepper(String pepper) {
-        this.pepper = pepper;
-    }
+    @Bindable(defaultValue = "3")
+    int getArgon2Iterations();
 
-    public int getMaxFailedAttempts() {
-        return maxFailedAttempts;
-    }
+    /** Defaults to the OWASP recommendation for Argon2id. */
+    @Bindable(defaultValue = "19456")
+    int getArgon2MemoryKib();
 
-    public void setMaxFailedAttempts(int maxFailedAttempts) {
-        this.maxFailedAttempts = maxFailedAttempts;
-    }
-
-    public int getArgon2Iterations() {
-        return argon2Iterations;
-    }
-
-    public void setArgon2Iterations(int argon2Iterations) {
-        this.argon2Iterations = argon2Iterations;
-    }
-
-    public int getArgon2MemoryKib() {
-        return argon2MemoryKib;
-    }
-
-    public void setArgon2MemoryKib(int argon2MemoryKib) {
-        this.argon2MemoryKib = argon2MemoryKib;
-    }
-
-    public int getArgon2Parallelism() {
-        return argon2Parallelism;
-    }
-
-    public void setArgon2Parallelism(int argon2Parallelism) {
-        this.argon2Parallelism = argon2Parallelism;
-    }
+    @Bindable(defaultValue = "1")
+    int getArgon2Parallelism();
 
 }

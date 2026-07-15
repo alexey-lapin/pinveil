@@ -23,8 +23,8 @@ class ClientConfigTest {
     @Test
     void buildsHumanReadableTtlLabels() {
         MessagePolicy policy = new MessagePolicy(Duration.ofMinutes(1), Duration.ofHours(24), 1024, 3);
-        ClientConfigProperties properties = new ClientConfigProperties();
-        properties.setTtlPresets(List.of(Duration.ofMinutes(15), Duration.ofMinutes(30), Duration.ofHours(1)));
+        ClientConfigProperties properties =
+                clientConfig(List.of(Duration.ofMinutes(15), Duration.ofMinutes(30), Duration.ofHours(1)));
 
         ClientConfig config = new ClientConfigFactory(policy, properties).create();
 
@@ -48,6 +48,28 @@ class ClientConfigTest {
         assertTrue(json.contains("\"pbkdf2Iterations\":600000"), json);
         assertTrue(json.contains("\"defaultTtlSeconds\":900"), json);
         assertTrue(json.contains("\"label\":\"15 minutes\""), json);
+    }
+
+    /** Stands in for the Micronaut-generated binding of {@link ClientConfigProperties}. */
+    private static ClientConfigProperties clientConfig(List<Duration> presets) {
+        return new ClientConfigProperties() {
+
+            @Override
+            public Duration getDefaultTtl() {
+                return Duration.ofMinutes(15);
+            }
+
+            @Override
+            public List<Duration> getTtlPresets() {
+                return presets;
+            }
+
+            @Override
+            public int getPbkdf2Iterations() {
+                return 600_000;
+            }
+
+        };
     }
 
 }

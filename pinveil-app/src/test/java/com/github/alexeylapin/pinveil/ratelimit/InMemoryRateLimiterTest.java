@@ -42,12 +42,26 @@ class InMemoryRateLimiterTest {
         assertTrue(limiter.tryAcquire(RateLimitConfig.CREATE_BUCKET, "ip"));
     }
 
+    /** Stands in for the Micronaut-generated binding of {@link RateLimitConfig}. */
     private static InMemoryRateLimiter limiter(int createLimit, int retrieveLimit, Duration window) {
-        RateLimitConfig config = new RateLimitConfig();
-        config.setCreateRequestsPerWindow(createLimit);
-        config.setRetrieveRequestsPerWindow(retrieveLimit);
-        config.setWindow(window);
-        return new InMemoryRateLimiter(config);
+        return new InMemoryRateLimiter(new RateLimitConfig() {
+
+            @Override
+            public Duration getWindow() {
+                return window;
+            }
+
+            @Override
+            public int getCreateRequestsPerWindow() {
+                return createLimit;
+            }
+
+            @Override
+            public int getRetrieveRequestsPerWindow() {
+                return retrieveLimit;
+            }
+
+        });
     }
 
 }

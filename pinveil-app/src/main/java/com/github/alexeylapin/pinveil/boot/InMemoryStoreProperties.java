@@ -1,6 +1,7 @@
 package com.github.alexeylapin.pinveil.boot;
 
 import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.core.bind.annotation.Bindable;
 
 /**
  * Binds {@code app.store.in-memory.*}: capacity limits guarding the in-memory store's
@@ -8,25 +9,13 @@ import io.micronaut.context.annotation.ConfigurationProperties;
  * a different backend (e.g. relational) would define its own settings, if any.
  */
 @ConfigurationProperties("app.store.in-memory")
-public class InMemoryStoreProperties {
+public interface InMemoryStoreProperties {
 
-    private int maxMessages = 1000;
-    private long maxBytes = 256L * 1024 * 1024;
+    @Bindable(defaultValue = "1000")
+    int getMaxMessages();
 
-    public int getMaxMessages() {
-        return maxMessages;
-    }
-
-    public void setMaxMessages(int maxMessages) {
-        this.maxMessages = maxMessages;
-    }
-
-    public long getMaxBytes() {
-        return maxBytes;
-    }
-
-    public void setMaxBytes(long maxBytes) {
-        this.maxBytes = maxBytes;
-    }
+    /** Defaults to 256 MiB. */
+    @Bindable(defaultValue = "268435456")
+    long getMaxBytes();
 
 }

@@ -1,53 +1,39 @@
 package com.github.alexeylapin.pinveil.ratelimit;
 
+import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.core.bind.annotation.Bindable;
+
 import java.time.Duration;
 
 /**
- * Fixed-window rate-limit settings, expressed per named bucket.
+ * Fixed-window rate-limit settings, expressed per named bucket, bound from
+ * {@code app.rate-limit.*}.
  */
-public class RateLimitConfig {
+@ConfigurationProperties("app.rate-limit")
+public interface RateLimitConfig {
 
     /** Bucket guarding message creation. */
-    public static final String CREATE_BUCKET = "create";
+    String CREATE_BUCKET = "create";
     /** Bucket guarding message retrieval. */
-    public static final String RETRIEVE_BUCKET = "retrieve";
+    String RETRIEVE_BUCKET = "retrieve";
 
-    private Duration window = Duration.ofMinutes(1);
-    private int createRequestsPerWindow = 10;
-    private int retrieveRequestsPerWindow = 30;
+    @Bindable(defaultValue = "1m")
+    Duration getWindow();
 
-    public Duration getWindow() {
-        return window;
-    }
+    @Bindable(defaultValue = "10")
+    int getCreateRequestsPerWindow();
 
-    public void setWindow(Duration window) {
-        this.window = window;
-    }
-
-    public int getCreateRequestsPerWindow() {
-        return createRequestsPerWindow;
-    }
-
-    public void setCreateRequestsPerWindow(int createRequestsPerWindow) {
-        this.createRequestsPerWindow = createRequestsPerWindow;
-    }
-
-    public int getRetrieveRequestsPerWindow() {
-        return retrieveRequestsPerWindow;
-    }
-
-    public void setRetrieveRequestsPerWindow(int retrieveRequestsPerWindow) {
-        this.retrieveRequestsPerWindow = retrieveRequestsPerWindow;
-    }
+    @Bindable(defaultValue = "30")
+    int getRetrieveRequestsPerWindow();
 
     /**
      * @return the request allowance for the given bucket within one window.
      * @throws IllegalArgumentException if the bucket is unknown.
      */
-    public int limitFor(String bucket) {
+    default int limitFor(String bucket) {
         return switch (bucket) {
-            case CREATE_BUCKET -> createRequestsPerWindow;
-            case RETRIEVE_BUCKET -> retrieveRequestsPerWindow;
+            case CREATE_BUCKET -> getCreateRequestsPerWindow();
+            case RETRIEVE_BUCKET -> getRetrieveRequestsPerWindow();
             default -> throw new IllegalArgumentException("Unknown rate-limit bucket: " + bucket);
         };
     }

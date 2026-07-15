@@ -2,6 +2,7 @@ package com.github.alexeylapin.pinveil.boot;
 
 import com.github.alexeylapin.pinveil.message.MessagePolicy;
 import io.micronaut.context.annotation.ConfigurationProperties;
+import io.micronaut.core.bind.annotation.Bindable;
 
 import java.time.Duration;
 
@@ -13,34 +14,16 @@ import java.time.Duration;
  * @see MessagePolicy
  */
 @ConfigurationProperties("app.messages")
-public class MessagePolicyProperties {
+public interface MessagePolicyProperties {
 
-    private Duration minTtl = Duration.ofMinutes(1);
-    private Duration maxTtl = Duration.ofHours(24);
-    private long maxPayloadBytes = 25L * 1024 * 1024;
+    @Bindable(defaultValue = "1m")
+    Duration getMinTtl();
 
-    public Duration getMinTtl() {
-        return minTtl;
-    }
+    @Bindable(defaultValue = "24h")
+    Duration getMaxTtl();
 
-    public void setMinTtl(Duration minTtl) {
-        this.minTtl = minTtl;
-    }
-
-    public Duration getMaxTtl() {
-        return maxTtl;
-    }
-
-    public void setMaxTtl(Duration maxTtl) {
-        this.maxTtl = maxTtl;
-    }
-
-    public long getMaxPayloadBytes() {
-        return maxPayloadBytes;
-    }
-
-    public void setMaxPayloadBytes(long maxPayloadBytes) {
-        this.maxPayloadBytes = maxPayloadBytes;
-    }
+    /** Defaults to 25 MiB. */
+    @Bindable(defaultValue = "26214400")
+    long getMaxPayloadBytes();
 
 }
