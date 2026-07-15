@@ -1,7 +1,5 @@
 package com.github.alexeylapin.pinveil.ratelimit;
 
-import com.github.alexeylapin.pinveil.config.RateLimitConfig;
-
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;

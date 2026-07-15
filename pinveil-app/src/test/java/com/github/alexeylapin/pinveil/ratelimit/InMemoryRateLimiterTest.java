@@ -1,6 +1,5 @@
 package com.github.alexeylapin.pinveil.ratelimit;
 
-import com.github.alexeylapin.pinveil.config.RateLimitConfig;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

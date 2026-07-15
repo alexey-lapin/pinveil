@@ -1,7 +1,7 @@
 package com.github.alexeylapin.pinveil.boot;
 
 import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
-import com.github.alexeylapin.pinveil.config.RateLimitConfig;
+import com.github.alexeylapin.pinveil.ratelimit.RateLimitConfig;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;

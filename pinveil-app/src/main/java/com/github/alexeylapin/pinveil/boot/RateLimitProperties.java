@@ -1,6 +1,6 @@
 package com.github.alexeylapin.pinveil.boot;
 
-import com.github.alexeylapin.pinveil.config.RateLimitConfig;
+import com.github.alexeylapin.pinveil.ratelimit.RateLimitConfig;
 import io.micronaut.context.annotation.ConfigurationProperties;
 
 /**

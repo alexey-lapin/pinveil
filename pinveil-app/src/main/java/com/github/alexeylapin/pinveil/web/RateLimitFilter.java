@@ -1,6 +1,6 @@
 package com.github.alexeylapin.pinveil.web;
 
-import com.github.alexeylapin.pinveil.config.RateLimitConfig;
+import com.github.alexeylapin.pinveil.ratelimit.RateLimitConfig;
 import com.github.alexeylapin.pinveil.ratelimit.RateLimiter;
 import com.github.alexeylapin.pinveil.web.dto.ErrorResponse;
 import io.micronaut.core.async.publisher.Publishers;

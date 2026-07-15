@@ -1,4 +1,4 @@
-package com.github.alexeylapin.pinveil.config;
+package com.github.alexeylapin.pinveil.ratelimit;
 
 import java.time.Duration;
 
