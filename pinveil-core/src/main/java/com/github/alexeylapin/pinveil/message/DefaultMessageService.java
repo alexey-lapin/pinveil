@@ -24,16 +24,26 @@ public class DefaultMessageService implements MessageService {
     private final MessagePolicy policy;
     private final PinVerifier pinVerifier;
     private final Supplier<String> idGenerator;
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final SecureRandom secureRandom;
 
+    /** Salts PIN hashes with a default {@link SecureRandom}. */
     public DefaultMessageService(MessageStore store,
                                  MessagePolicy policy,
                                  PinVerifier pinVerifier,
                                  Supplier<String> idGenerator) {
+        this(store, policy, pinVerifier, idGenerator, new SecureRandom());
+    }
+
+    public DefaultMessageService(MessageStore store,
+                                 MessagePolicy policy,
+                                 PinVerifier pinVerifier,
+                                 Supplier<String> idGenerator,
+                                 SecureRandom secureRandom) {
         this.store = store;
         this.policy = policy;
         this.pinVerifier = pinVerifier;
         this.idGenerator = idGenerator;
+        this.secureRandom = secureRandom;
     }
 
     @Override

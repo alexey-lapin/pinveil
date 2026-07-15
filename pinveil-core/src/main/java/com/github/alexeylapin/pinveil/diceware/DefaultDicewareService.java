@@ -16,8 +16,17 @@ public class DefaultDicewareService implements DicewareService {
 
     private static final int EFF_WORDLIST_SIZE = 7776;
 
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final SecureRandom secureRandom;
     private final List<String> words = loadWords();
+
+    /** Selects words with a default {@link SecureRandom}. */
+    public DefaultDicewareService() {
+        this(new SecureRandom());
+    }
+
+    public DefaultDicewareService(SecureRandom secureRandom) {
+        this.secureRandom = secureRandom;
+    }
 
     @Override
     public List<String> words(int count) {

@@ -14,10 +14,16 @@ public class DicewareIdGenerator implements Supplier<String> {
     private final int wordCount;
     private final int digits;
     private final int numberBound;
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final SecureRandom secureRandom;
 
+    /** Draws the numeric suffix from a default {@link SecureRandom}. */
     public DicewareIdGenerator(DicewareService diceware, int words, int digits) {
+        this(diceware, new SecureRandom(), words, digits);
+    }
+
+    public DicewareIdGenerator(DicewareService diceware, SecureRandom secureRandom, int words, int digits) {
         this.diceware = diceware;
+        this.secureRandom = secureRandom;
         this.wordCount = words;
         this.digits = digits;
         this.numberBound = pow10(digits);
