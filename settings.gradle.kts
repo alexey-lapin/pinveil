@@ -5,3 +5,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "pinveil"
+
+include("pinveil-core", "pinveil-app")
