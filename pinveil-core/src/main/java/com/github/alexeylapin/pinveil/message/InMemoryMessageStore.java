@@ -1,7 +1,5 @@
 package com.github.alexeylapin.pinveil.message;
 
-import com.github.alexeylapin.pinveil.config.InMemoryStoreConfig;
-
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;
@@ -17,12 +15,14 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryMessageStore implements MessageStore {
 
-    private final InMemoryStoreConfig config;
+    private final int maxMessages;
+    private final long maxBytes;
     private final Map<String, StoredMessage> messages = new ConcurrentHashMap<>();
     private long storedBytes;
 
-    public InMemoryMessageStore(InMemoryStoreConfig config) {
-        this.config = config;
+    public InMemoryMessageStore(int maxMessages, long maxBytes) {
+        this.maxMessages = maxMessages;
+        this.maxBytes = maxBytes;
     }
 
     @Override
@@ -85,7 +85,7 @@ public class InMemoryMessageStore implements MessageStore {
         StoredMessage existing = messages.get(message.id());
         int projectedCount = messages.size() + (existing == null ? 1 : 0);
         long projectedBytes = storedBytes + message.sizeInBytes() - (existing == null ? 0 : existing.sizeInBytes());
-        return projectedCount <= config.getMaxMessages() && projectedBytes <= config.getMaxBytes();
+        return projectedCount <= maxMessages && projectedBytes <= maxBytes;
     }
 
 }

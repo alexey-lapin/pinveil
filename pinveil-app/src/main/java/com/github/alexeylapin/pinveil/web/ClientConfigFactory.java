@@ -1,6 +1,6 @@
 package com.github.alexeylapin.pinveil.web;
 
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
+import com.github.alexeylapin.pinveil.message.MessagePolicy;
 import com.github.alexeylapin.pinveil.web.dto.ClientConfig;
 import jakarta.inject.Singleton;
 
@@ -8,29 +8,32 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * Builds the browser-facing {@link ClientConfig} from server policy, including
- * human-readable labels for the TTL presets.
+ * Builds the browser-facing {@link ClientConfig}, including human-readable labels for
+ * the TTL presets. It draws the advertised limits from the same {@link MessagePolicy}
+ * the core enforces, so the UI cannot offer something the server would reject.
  */
 @Singleton
 public class ClientConfigFactory {
 
-    private final MessagePolicyConfig policy;
+    private final MessagePolicy policy;
+    private final ClientConfigProperties properties;
 
-    public ClientConfigFactory(MessagePolicyConfig policy) {
+    public ClientConfigFactory(MessagePolicy policy, ClientConfigProperties properties) {
         this.policy = policy;
+        this.properties = properties;
     }
 
     public ClientConfig create() {
-        List<ClientConfig.TtlPreset> presets = policy.getTtlPresets().stream()
+        List<ClientConfig.TtlPreset> presets = properties.getTtlPresets().stream()
                 .map(duration -> new ClientConfig.TtlPreset(duration.toSeconds(), label(duration)))
                 .toList();
 
         return new ClientConfig(
-                policy.getMaxPayloadBytes(),
-                policy.getPbkdf2Iterations(),
-                policy.getMinTtl().toSeconds(),
-                policy.getMaxTtl().toSeconds(),
-                policy.getDefaultTtl().toSeconds(),
+                policy.maxPayloadBytes(),
+                properties.getPbkdf2Iterations(),
+                policy.minTtl().toSeconds(),
+                policy.maxTtl().toSeconds(),
+                properties.getDefaultTtl().toSeconds(),
                 presets
         );
     }

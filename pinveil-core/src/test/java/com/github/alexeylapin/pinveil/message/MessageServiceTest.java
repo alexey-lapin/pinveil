@@ -1,10 +1,8 @@
 package com.github.alexeylapin.pinveil.message;
 
-import com.github.alexeylapin.pinveil.config.MessageIdConfig;
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
-import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
 import com.github.alexeylapin.pinveil.diceware.DefaultDicewareService;
 import com.github.alexeylapin.pinveil.diceware.DicewareIdGenerator;
+import com.github.alexeylapin.pinveil.security.Argon2Params;
 import com.github.alexeylapin.pinveil.security.Argon2PinVerifier;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MessageServiceTest {
+
+    private static final int MAX_FAILED_ATTEMPTS = 3;
 
     @Test
     void retrievesAndDeletesStoredMessage() {
@@ -41,7 +41,7 @@ class MessageServiceTest {
         MessageService service = createService();
         CreateResult result = service.create(command("123456", 60));
 
-        for (int attempt = 0; attempt < 3; attempt++) {
+        for (int attempt = 0; attempt < MAX_FAILED_ATTEMPTS; attempt++) {
             assertThrows(MessageException.class, () -> service.retrieve(result.id(), "000000"));
         }
 
@@ -87,15 +87,15 @@ class MessageServiceTest {
     }
 
     private MessageService createService() {
-        MessagePolicyConfig policy = new MessagePolicyConfig();
-        policy.setMinTtl(Duration.ofSeconds(1));
-        policy.setMaxTtl(Duration.ofHours(24));
-
-        PinSecurityConfig pinSecurity = new PinSecurityConfig();
-        pinSecurity.setPepper("test-pepper");
-
-        DicewareIdGenerator idGenerator = new DicewareIdGenerator(new DefaultDicewareService(), new MessageIdConfig());
-        return new DefaultMessageService(new FakeMessageStore(), policy, pinSecurity, new Argon2PinVerifier(pinSecurity), idGenerator);
+        MessagePolicy policy = new MessagePolicy(
+                Duration.ofSeconds(1),
+                Duration.ofHours(24),
+                25L * 1024 * 1024,
+                MAX_FAILED_ATTEMPTS
+        );
+        Argon2PinVerifier pinVerifier = new Argon2PinVerifier(new Argon2Params("test-pepper", 3, 19_456, 1));
+        DicewareIdGenerator idGenerator = new DicewareIdGenerator(new DefaultDicewareService(), 3, 6);
+        return new DefaultMessageService(new FakeMessageStore(), policy, pinVerifier, idGenerator);
     }
 
     /** Minimal in-memory store so the service can be tested in isolation. */

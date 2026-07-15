@@ -1,7 +1,5 @@
 package com.github.alexeylapin.pinveil.message;
 
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
-import com.github.alexeylapin.pinveil.config.PinSecurityConfig;
 import com.github.alexeylapin.pinveil.security.PinVerifier;
 
 import java.security.SecureRandom;
@@ -23,20 +21,17 @@ public class DefaultMessageService implements MessageService {
     private static final int PIN_SALT_BYTES = 16;
 
     private final MessageStore store;
-    private final MessagePolicyConfig policy;
-    private final PinSecurityConfig pinSecurity;
+    private final MessagePolicy policy;
     private final PinVerifier pinVerifier;
     private final Supplier<String> idGenerator;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public DefaultMessageService(MessageStore store,
-                                 MessagePolicyConfig policy,
-                                 PinSecurityConfig pinSecurity,
+                                 MessagePolicy policy,
                                  PinVerifier pinVerifier,
                                  Supplier<String> idGenerator) {
         this.store = store;
         this.policy = policy;
-        this.pinSecurity = pinSecurity;
         this.pinVerifier = pinVerifier;
         this.idGenerator = idGenerator;
     }
@@ -73,7 +68,7 @@ public class DefaultMessageService implements MessageService {
 
         if (!pinVerifier.verify(pin, message.pinSalt(), message.pinVerifier())) {
             StoredMessage attempted = message.withIncrementedFailedAttempts();
-            if (attempted.failedPinAttempts() >= pinSecurity.getMaxFailedAttempts()) {
+            if (attempted.failedPinAttempts() >= policy.maxFailedAttempts()) {
                 store.remove(id);
             } else {
                 store.save(attempted);
@@ -98,11 +93,11 @@ public class DefaultMessageService implements MessageService {
         if (!isValidPin(command.pin())) {
             throw new MessageException(MessageError.INVALID_REQUEST, "Invalid PIN format");
         }
-        if (command.blob().length == 0 || command.blob().length > policy.getMaxPayloadBytes()) {
+        if (command.blob().length == 0 || command.blob().length > policy.maxPayloadBytes()) {
             throw new MessageException(MessageError.PAYLOAD_TOO_LARGE, "Blob exceeds maximum size");
         }
         Duration ttl = Duration.ofSeconds(command.ttlSeconds());
-        if (ttl.compareTo(policy.getMinTtl()) < 0 || ttl.compareTo(policy.getMaxTtl()) > 0) {
+        if (ttl.compareTo(policy.minTtl()) < 0 || ttl.compareTo(policy.maxTtl()) > 0) {
             throw new MessageException(MessageError.INVALID_REQUEST, "TTL is outside the allowed range");
         }
     }

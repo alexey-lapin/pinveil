@@ -1,6 +1,5 @@
 package com.github.alexeylapin.pinveil.web;
 
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.json.JsonMapper;
@@ -16,12 +15,12 @@ import java.util.Map;
 @Controller
 public class PageController {
 
-    private final MessagePolicyConfig policy;
+    private final ClientConfigProperties properties;
     private final ClientConfigFactory clientConfigFactory;
     private final JsonMapper jsonMapper;
 
-    public PageController(MessagePolicyConfig policy, ClientConfigFactory clientConfigFactory, JsonMapper jsonMapper) {
-        this.policy = policy;
+    public PageController(ClientConfigProperties properties, ClientConfigFactory clientConfigFactory, JsonMapper jsonMapper) {
+        this.properties = properties;
         this.clientConfigFactory = clientConfigFactory;
         this.jsonMapper = jsonMapper;
     }
@@ -31,7 +30,7 @@ public class PageController {
     public Map<String, Object> index() throws IOException {
         return Map.of(
                 "clientConfigJson", clientConfigJson(),
-                "defaultTtlSeconds", policy.getDefaultTtl().toSeconds()
+                "defaultTtlSeconds", properties.getDefaultTtl().toSeconds()
         );
     }
 

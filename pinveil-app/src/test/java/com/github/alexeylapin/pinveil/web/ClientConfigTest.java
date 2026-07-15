@@ -1,6 +1,6 @@
 package com.github.alexeylapin.pinveil.web;
 
-import com.github.alexeylapin.pinveil.config.MessagePolicyConfig;
+import com.github.alexeylapin.pinveil.message.MessagePolicy;
 import com.github.alexeylapin.pinveil.web.dto.ClientConfig;
 import io.micronaut.json.JsonMapper;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
@@ -22,10 +22,11 @@ class ClientConfigTest {
 
     @Test
     void buildsHumanReadableTtlLabels() {
-        MessagePolicyConfig policy = new MessagePolicyConfig();
-        policy.setTtlPresets(List.of(Duration.ofMinutes(15), Duration.ofMinutes(30), Duration.ofHours(1)));
+        MessagePolicy policy = new MessagePolicy(Duration.ofMinutes(1), Duration.ofHours(24), 1024, 3);
+        ClientConfigProperties properties = new ClientConfigProperties();
+        properties.setTtlPresets(List.of(Duration.ofMinutes(15), Duration.ofMinutes(30), Duration.ofHours(1)));
 
-        ClientConfig config = new ClientConfigFactory(policy).create();
+        ClientConfig config = new ClientConfigFactory(policy, properties).create();
 
         assertEquals(
                 List.of("15 minutes", "30 minutes", "1 hour"),

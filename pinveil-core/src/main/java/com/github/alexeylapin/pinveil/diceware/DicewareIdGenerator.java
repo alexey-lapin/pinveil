@@ -1,7 +1,5 @@
 package com.github.alexeylapin.pinveil.diceware;
 
-import com.github.alexeylapin.pinveil.config.MessageIdConfig;
-
 import java.security.SecureRandom;
 import java.util.function.Supplier;
 
@@ -18,11 +16,11 @@ public class DicewareIdGenerator implements Supplier<String> {
     private final int numberBound;
     private final SecureRandom secureRandom = new SecureRandom();
 
-    public DicewareIdGenerator(DicewareService diceware, MessageIdConfig config) {
+    public DicewareIdGenerator(DicewareService diceware, int words, int digits) {
         this.diceware = diceware;
-        this.wordCount = config.getWords();
-        this.digits = config.getDigits();
-        this.numberBound = pow10(config.getDigits());
+        this.wordCount = words;
+        this.digits = digits;
+        this.numberBound = pow10(digits);
     }
 
     @Override

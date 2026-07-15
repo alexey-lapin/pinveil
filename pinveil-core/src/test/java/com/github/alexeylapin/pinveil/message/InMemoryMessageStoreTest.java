@@ -1,6 +1,5 @@
 package com.github.alexeylapin.pinveil.message;
 
-import com.github.alexeylapin.pinveil.config.InMemoryStoreConfig;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -70,10 +69,7 @@ class InMemoryMessageStoreTest {
     }
 
     private static InMemoryMessageStore store(int maxMessages, long maxBytes) {
-        InMemoryStoreConfig config = new InMemoryStoreConfig();
-        config.setMaxMessages(maxMessages);
-        config.setMaxBytes(maxBytes);
-        return new InMemoryMessageStore(config);
+        return new InMemoryMessageStore(maxMessages, maxBytes);
     }
 
     private static StoredMessage message(String id, int size, Instant expiresAt) {
