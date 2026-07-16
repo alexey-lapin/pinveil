@@ -1,6 +1,6 @@
 [versions]
 micronaut = "4.10.9"
-micronaut-plugin = "4.6.2"
+micronaut-plugin = "5.0.2"
 
 [plugins]
 micronaut-aot = { id = "io.micronaut.aot", version.ref = "micronaut-plugin" }
