@@ -80,6 +80,10 @@ impl Dir {
     }
 }
 
+pub fn link_count(path: &Path) -> io::Result<u64> {
+    acl::link_count(&File::open(path)?)
+}
+
 pub fn create_private_dir(path: &Path) -> io::Result<()> {
     // Refuse before creating anything on a volume that would ignore the private DACL.
     let parent = match path.parent() {
@@ -139,9 +143,10 @@ mod acl {
         TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
-        GetVolumeInformationByHandleW, VOLUME_NAME_DOS,
+        BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW,
+        FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_NORMALIZED,
+        GetFileInformationByHandle, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
+        VOLUME_NAME_DOS,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -260,6 +265,17 @@ mod acl {
         }
         // SAFETY: `handle` is a new, valid file handle owned by nothing else.
         Ok(unsafe { File::from_raw_handle(handle) })
+    }
+
+    /// The number of hard links to the file `file` refers to.
+    pub fn link_count(file: &File) -> io::Result<u64> {
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is a plain-data struct the call fills; the handle is valid for the
+        // life of `file`. (The zeroed value above is a valid all-integer struct.)
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(u64::from(info.nNumberOfLinks))
     }
 
     /// The filesystem flags of the volume holding `file`.

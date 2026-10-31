@@ -1301,6 +1301,7 @@ dependencies = [
  "humantime",
  "ipnet",
  "pinveil-core",
+ "pinveil-fs",
  "reqwest",
  "rusqlite",
  "serde",

@@ -98,6 +98,12 @@ impl Dir {
     }
 }
 
+/// How many hard links name the file at `path` (links are followed). A file reachable by
+/// several names can't be identified by any one of them.
+pub fn link_count(path: &Path) -> io::Result<u64> {
+    sys::link_count(path)
+}
+
 /// Creates a new private directory at `path` (owner-only; on Windows, inherited by what is
 /// created inside). Fails if anything exists there.
 pub fn create_private_dir(path: &Path) -> io::Result<()> {

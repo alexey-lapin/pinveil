@@ -24,6 +24,7 @@ base64 = "0.23.1"
 humantime = "2.4.0"
 ipnet = "2.12.2"
 pinveil-core = { version = "0.0.0", path = "../pinveil-core" }
+pinveil-fs = { version = "0.0.0", path = "../pinveil-fs" }
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

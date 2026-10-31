@@ -222,8 +222,8 @@ fn incompatible(path: &Path, why: &str) -> OpenError {
 }
 
 /// The resolved path `SQLite` and the lock use. A symlink (or Windows junction) is resolved,
-/// so every name for the database maps to one lock. Unix hard links can't be told apart by
-/// name, so a database file with more than one link is refused.
+/// so every name for the database maps to one lock. Hard links can't be told apart by name,
+/// so a database file with more than one link is refused, on every platform.
 fn identity(path: &Path) -> Result<PathBuf, String> {
     let resolved = match std::fs::symlink_metadata(path) {
         Ok(_) => {
@@ -241,12 +241,12 @@ fn identity(path: &Path) -> Result<PathBuf, String> {
         }
         Err(e) => return Err(e.to_string()),
     };
-    #[cfg(unix)]
-    if let Ok(meta) = std::fs::metadata(&resolved) {
-        use std::os::unix::fs::MetadataExt;
-        if meta.nlink() > 1 {
-            return Err("the database file has other hard links; give it a single name".into());
-        }
+    if resolved.exists()
+        && pinveil_fs::link_count(&resolved)
+            .map_err(|e| format!("cannot inspect the database file: {e}"))?
+            > 1
+    {
+        return Err("the database file has other hard links; give it a single name".into());
     }
     Ok(strip_verbatim(resolved))
 }
@@ -270,7 +270,8 @@ fn strip_verbatim(path: PathBuf) -> PathBuf {
 /// whitespace-normalized. `SQLite`'s own objects are left out.
 fn schema_objects(conn: &Connection) -> rusqlite::Result<Vec<(String, String, String)>> {
     conn.prepare(
-        "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        // GLOB, not LIKE: in LIKE `_` is a wildcard, which would also hide `sqliteevil`.
+        "SELECT type, name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name",
     )?
     .query_map([], |r| {
         let sql: Option<String> = r.get(2)?;

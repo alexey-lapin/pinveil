@@ -344,7 +344,17 @@ fn sql_schema_same_names_wrong_constraints_are_refused() {
         SqliteStore::open(&path, "pepper", 10, 10_000),
         Err(OpenError::Incompatible { .. })
     ));
-    // An extra trigger is refused too.
+    // An extra trigger is refused too, including one whose name starts like SQLite's own.
+    let dir = tempfile::tempdir().unwrap();
+    drop(open(&dir));
+    Connection::open(dir.path().join("store.db"))
+        .unwrap()
+        .execute_batch("CREATE TRIGGER sqliteevil AFTER DELETE ON messages BEGIN SELECT 1; END;")
+        .unwrap();
+    assert!(matches!(
+        SqliteStore::open(&dir.path().join("store.db"), "pepper", 10, 10_000),
+        Err(OpenError::Incompatible { .. })
+    ));
     let dir = tempfile::tempdir().unwrap();
     drop(open(&dir));
     Connection::open(dir.path().join("store.db"))
@@ -382,19 +392,21 @@ fn sql_pepper_missing_fingerprint_in_a_populated_store_is_refused() {
     assert_eq!(fingerprints, 0);
 }
 
-#[cfg(unix)]
 #[test]
 fn sql_lock_aliases_of_one_database_share_one_lock() {
     let dir = tempfile::tempdir().unwrap();
     let first = open(&dir);
-    let alias = dir.path().join("alias.db");
-    std::os::unix::fs::symlink(dir.path().join("store.db"), &alias).unwrap();
-    assert!(matches!(
-        SqliteStore::open(&alias, "pepper", 10, 10_000),
-        Err(OpenError::Locked(_))
-    ));
+    #[cfg(unix)]
+    {
+        let alias = dir.path().join("alias.db");
+        std::os::unix::fs::symlink(dir.path().join("store.db"), &alias).unwrap();
+        assert!(matches!(
+            SqliteStore::open(&alias, "pepper", 10, 10_000),
+            Err(OpenError::Locked(_))
+        ));
+    }
     drop(first);
-    // A hard link can't be told apart by name, so it is refused outright.
+    // A hard link can't be told apart by name, so it is refused outright, on every platform.
     let linked = dir.path().join("linked.db");
     std::fs::hard_link(dir.path().join("store.db"), &linked).unwrap();
     assert!(matches!(
@@ -445,10 +457,14 @@ fn sql_pragmas_a_blocked_checkpoint_is_reported_then_recovers() {
 fn sql_expiry_times_are_checked_not_clamped() {
     use super::{from_nanos, nanos};
     assert_eq!(nanos(SystemTime::UNIX_EPOCH), Some(0));
-    let latest = SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::try_from(i64::MAX).unwrap());
-    assert_eq!(nanos(latest), Some(i64::MAX));
-    assert_eq!(from_nanos(i64::MAX), Some(latest));
-    assert_eq!(nanos(latest + Duration::from_nanos(1)), None);
+    // The latest storable time, rounded down to 100 ns: Windows SystemTime has 100 ns
+    // resolution, so a 1 ns step can't be represented there.
+    let latest_nanos = i64::MAX / 100 * 100;
+    let latest =
+        SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::try_from(latest_nanos).unwrap());
+    assert_eq!(nanos(latest), Some(latest_nanos));
+    assert_eq!(from_nanos(latest_nanos), Some(latest));
+    assert_eq!(nanos(latest + Duration::from_secs(1)), None);
     assert_eq!(nanos(SystemTime::UNIX_EPOCH - Duration::from_secs(1)), None);
     assert_eq!(from_nanos(-1), None);
     let now = t(5);

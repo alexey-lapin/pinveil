@@ -72,6 +72,11 @@ impl Dir {
     }
 }
 
+pub fn link_count(path: &Path) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(std::fs::metadata(path)?.nlink())
+}
+
 pub fn create_private_dir(path: &Path) -> io::Result<()> {
     Ok(mkdirat(CWD, path, Mode::from_raw_mode(0o700))?)
 }

@@ -53,6 +53,16 @@ fn unix_files_are_owner_only_and_links_are_never_followed() {
 }
 
 #[test]
+fn link_count_sees_hard_links() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("db");
+    fs::write(&file, b"x").unwrap();
+    assert_eq!(super::link_count(&file).unwrap(), 1);
+    fs::hard_link(&file, root.path().join("alias")).unwrap();
+    assert_eq!(super::link_count(&file).unwrap(), 2);
+}
+
+#[test]
 fn replace_refuses_directories_and_leaves_no_temp_files() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("sub")).unwrap();
