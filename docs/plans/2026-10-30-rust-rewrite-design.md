@@ -119,7 +119,9 @@ The CLI writes to a unique owner-only temp file and deletes it on success and on
 
 ### Parser
 
-The parser is `usage-rs` (typed derives, verified on crates.io v7.1.4 and in mise main), with `unknown_flags = "error"` and an explicit policy for repeated options. Paths use `PathBuf`. Mutually incompatible input modes are validated after parsing. Content and PIN never pass through the parser. The one exception is the opt-in positional URL for `get`, which carries the passphrase in its fragment. For that argument, parser diagnostics (usage errors, help echoes, debug output) must redact the fragment just as HTTP errors do, and a test covers it.
+The parser is `usage-rs` (crate `usage-lib` 7.1.4), with `unknown_flags = "error"` and an explicit policy for repeated options. Paths use `PathBuf`. Mutually incompatible input modes are validated after parsing. Content and PIN never pass through the parser. The one exception is the opt-in positional URL for `get`, which carries the passphrase in its fragment. For that argument, parser diagnostics (usage errors, help echoes, debug output) must redact the fragment just as HTTP errors do, and a test covers it.
+
+Correction found in Phase 4: `usage-lib` 7.1.4 has no typed derives. The command spec is KDL text parsed at runtime, and a small hand-written layer maps the parse output into typed structs. The library keeps the last value of a repeated flag, so the CLI rejects repeats itself from the parse tokens. Help is rendered from the spec by the CLI, which avoids the library's optional template engine. The fragment is cut off every URL-like argument before the parser runs, so no diagnostic can echo it.
 
 ## Server runtime
 
