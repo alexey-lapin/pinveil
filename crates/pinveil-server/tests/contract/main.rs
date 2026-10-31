@@ -3,4 +3,5 @@
 //! Test names follow `docs/coverage.md` ids in snake case.
 
 mod harness;
+mod messages;
 mod web;

@@ -19,11 +19,26 @@ use pinveil_core::wordlist::Wordlist;
 use crate::app::{AppState, router};
 use crate::config::Config;
 
+/// How often expired messages are swept (APP.md, "Store modes").
+const SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
+
 /// Validates startup invariants, then serves on `listener` until shutdown.
 pub async fn serve(listener: tokio::net::TcpListener, config: Config) -> std::io::Result<()> {
     // Invariant 12: never serve or use a wordlist that fails validation.
-    Wordlist::embedded().map_err(|e| std::io::Error::other(format!("embedded wordlist: {e}")))?;
-    let app = router(Arc::new(AppState::new(config)));
+    let wordlist = Wordlist::embedded()
+        .map_err(|e| std::io::Error::other(format!("embedded wordlist: {e}")))?;
+    let state = Arc::new(AppState::new(config, wordlist));
+    let service = Arc::clone(&state.service);
+    tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(SWEEP_INTERVAL);
+        loop {
+            ticks.tick().await;
+            if service.sweep().is_err() {
+                eprintln!("pinveil-server: expiry sweep failed");
+            }
+        }
+    });
+    let app = router(state);
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

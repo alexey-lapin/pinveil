@@ -14,10 +14,18 @@ use serde::Serialize;
 use crate::assets::{self, INDEX_HTML, MESSAGE_HTML};
 use crate::config::{Config, ttl_label};
 use crate::error::{ApiError, error_response, message_for_status};
+use crate::pin::Argon2Verifier;
+use crate::service::{HashPool, Parts, Policy, Service, SystemClock, WordIds};
+use crate::store::MemoryStore;
+use pinveil_core::wordlist::Wordlist;
+use tokio::sync::Semaphore;
 
 /// Shared state for every handler.
 pub struct AppState {
     pub config: Config,
+    pub service: Arc<Service>,
+    /// Bounds create requests whose bodies are in flight (`server.max_concurrent_uploads`).
+    pub uploads: Semaphore,
     /// The client config as script-safe JSON, built once at startup.
     client_config_json: String,
     /// `index.html` with the client config filled in.
@@ -25,14 +33,42 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// The production state: memory store, Argon2 verifier, system clock, diceware ids.
     #[must_use]
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, wordlist: Wordlist<'static>) -> Self {
+        let service = Service::new(Parts {
+            store: Arc::new(MemoryStore::new(
+                config.store.max_messages,
+                config.store.max_bytes,
+            )),
+            verifier: Arc::new(Argon2Verifier::new(&config.pin)),
+            pool: HashPool::new(
+                config.pin.max_concurrent_hashes,
+                config.pin.max_queued_hashes,
+            ),
+            clock: Arc::new(SystemClock),
+            ids: Arc::new(WordIds::new(
+                wordlist,
+                config.message_id.words,
+                config.message_id.digits,
+            )),
+            policy: Policy::from_config(&config),
+        });
+        Self::with_service(config, service)
+    }
+
+    /// State around a given service, for tests that swap in seams.
+    #[must_use]
+    pub fn with_service(config: Config, service: Arc<Service>) -> Self {
         let client_config = ClientConfig::from_config(&config);
         let json = serde_json::to_string(&client_config).expect("client config serializes");
         let client_config_json = assets::script_safe_json(&json);
         let index_html = INDEX_HTML.replace("{{client_config_json}}", &client_config_json);
+        let uploads = Semaphore::new(config.max_concurrent_uploads);
         Self {
             config,
+            service,
+            uploads,
             client_config_json,
             index_html,
         }
@@ -93,7 +129,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/message/{id}", get(message_page))
         .route("/static/{file}", get(static_file))
         .route("/api/config", get(api_config))
-        .merge(crate::api::routes())
+        .merge(crate::api::routes(state.config.messages.max_payload_bytes))
         .fallback(|| async { ApiError::NotFound })
         .method_not_allowed_fallback(|| async {
             error_response(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed")
