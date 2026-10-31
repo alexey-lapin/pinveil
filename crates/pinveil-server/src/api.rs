@@ -22,8 +22,8 @@ use crate::ratelimit::{Bucket, client_address};
 /// Room for the multipart framing and the `pin` and `ttl` parts on top of the blob itself.
 pub const MULTIPART_OVERHEAD_BYTES: usize = 64 * 1024;
 
-/// API routes, merged into the application router. Each route counts against its rate-limit
-/// bucket before anything else runs.
+/// API routes, merged into the application router. `route_layer` puts the limiter on the
+/// named method only: other methods on these paths get 405 without counting.
 pub fn routes(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     let body_limit = state.config.messages.max_payload_bytes + MULTIPART_OVERHEAD_BYTES;
     let limited = |bucket| middleware::from_fn_with_state((Arc::clone(state), bucket), rate_limit);
@@ -32,18 +32,19 @@ pub fn routes(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/messages",
             post(create)
                 .layer(DefaultBodyLimit::max(body_limit))
-                .layer(limited(Bucket::Create)),
+                .route_layer(limited(Bucket::Create)),
         )
         .route(
             "/api/messages/{id}/retrieve",
             // axum would also run a GET handler for HEAD and drop the body, which would
             // consume the message without delivering it. HEAD gets an explicit 405 before
-            // any lookup, verification, or attempt.
+            // any lookup, verification, or attempt. It is added after the limiter, so it
+            // doesn't count against the GET bucket.
             get(retrieve)
+                .route_layer(limited(Bucket::Retrieve))
                 .head(|| async {
                     error_response(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed")
-                })
-                .layer(limited(Bucket::Retrieve)),
+                }),
         )
 }
 

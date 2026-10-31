@@ -106,7 +106,7 @@ CSS, JS modules, and `eff_large_wordlist.txt`. All embedded in the server binary
 | 429 | create rate limit hit | `{"error": "Rate limit exceeded"}` |
 | 503 | store full, storage error, or 10 id collisions in a row | `{"error": ...}` |
 
-The request body limit is `max_payload_bytes` plus 64 KiB of multipart overhead, enforced for chunked uploads too. The server reads the whole (capped) body before answering any other error, so clients reliably receive the response instead of a reset connection.
+The request body limit is `max_payload_bytes` plus 64 KiB of multipart overhead, enforced for chunked uploads too. Validation errors (415, and 400 for a duplicate, unexpected, or missing part) are answered only after the server has read the whole capped body, so clients get the response rather than a reset connection. Refusals that exist to shed load answer at once without reading the body: 429 rate limit, 503 upload admission, and 413 once the cap is crossed. A malformed multipart body can also be refused before it is fully read. In those cases a client still sending may see the connection reset instead of the response.
 
 ### `GET /api/messages/{id}/retrieve`
 

@@ -153,3 +153,43 @@ async fn srv_ratelimit_window_resets() {
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert_eq!(statuses(&server, &[None]).await, [415]);
 }
+
+#[tokio::test]
+async fn srv_ratelimit_only_post_create_and_get_retrieve_count() {
+    let server = Server::start_with(&[
+        ("PINVEIL_RATE_LIMIT__CREATE_PER_WINDOW", "1"),
+        ("PINVEIL_RATE_LIMIT__RETRIEVE_PER_WINDOW", "1"),
+    ])
+    .await;
+    let retrieve_url = server.url("/api/messages/x/retrieve");
+    let other_methods = [
+        (reqwest::Method::HEAD, retrieve_url.clone()),
+        (reqwest::Method::POST, retrieve_url.clone()),
+        (reqwest::Method::DELETE, retrieve_url.clone()),
+        (reqwest::Method::GET, server.url("/api/messages")),
+        (reqwest::Method::HEAD, server.url("/api/messages")),
+        (reqwest::Method::PUT, server.url("/api/messages")),
+    ];
+    for _ in 0..3 {
+        for (method, url) in &other_methods {
+            let response = server
+                .client
+                .request(method.clone(), url)
+                .header("x-message-pin", "123456")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 405, "{method} {url}");
+        }
+    }
+    // Neither bucket was touched: each real request still gets its first-request outcome.
+    let get = server
+        .client
+        .get(&retrieve_url)
+        .header("x-message-pin", "123456")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 404);
+    assert_eq!(statuses(&server, &[None, None]).await, [415, 429]);
+}
