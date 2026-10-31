@@ -101,15 +101,16 @@ CSS, JS modules, and `eff_large_wordlist.txt`. All embedded in the server binary
 |---|---|---|
 | 201 | created | `{"id": "...", "expiresAt": "2026-10-30T23:02:38Z"}` (ISO-8601 UTC) |
 | 400 | missing, duplicate, or unexpected part; bad PIN; TTL not an integer or out of range; empty blob; malformed multipart | `{"error": ...}` |
-| 413 | blob or request body over the limit | `{"error": "Payload too large"}` |
+| 413 | blob or request body over the limit, multipart or not | `{"error": "Payload too large"}` |
+| 415 | body is not `multipart/form-data` | `{"error": "Unsupported media type"}` |
 | 429 | create rate limit hit | `{"error": "Rate limit exceeded"}` |
 | 503 | store full, storage error, or 10 id collisions in a row | `{"error": ...}` |
 
-The request body limit is `max_payload_bytes` plus a bounded multipart overhead, enforced for chunked uploads too.
+The request body limit is `max_payload_bytes` plus 64 KiB of multipart overhead, enforced for chunked uploads too. The server reads the whole (capped) body before answering any other error, so clients reliably receive the response instead of a reset connection.
 
 ### `GET /api/messages/{id}/retrieve`
 
-The PIN goes in the `X-Message-Pin` request header. Because the endpoint needs a custom header, link previewers and prefetchers can't trigger it by accident.
+The PIN goes in the `X-Message-Pin` request header. Because the endpoint needs a custom header, link previewers and prefetchers can't trigger it by accident. `HEAD` on this route is refused with 405 before any lookup, so it can never consume a message or count an attempt.
 
 The server checks in this order:
 
@@ -128,7 +129,7 @@ Steps 2 to 5 are serialized per message id, so two concurrent retrievals of the 
 | 403 | `{"error": "Unable to retrieve message"}` (never reveals remaining attempts) |
 | 404 | `{"error": "Message unavailable"}` (same for every gone state) |
 | 429 | `{"error": "Rate limit exceeded"}` |
-| 503 | `{"error": ...}` storage error. No blob is sent. |
+| 503 | `{"error": ...}` storage error, or too many retrievals in progress. No blob is sent. |
 
 With the default limit of 3, wrong PINs return 403, 403, 403. The third one burns the message, and every later request returns 404. A wrong PIN on a live message returns 403 while an unknown id returns 404. That is an accepted part of the contract: ids carry about 58 bits, so nobody can enumerate them.
 
@@ -322,14 +323,16 @@ The server is honest but curious. It may look at everything it receives, so it m
 | `pinSalt` | base64 |
 | `expiresAt` | absolute time, now + ttl at create time |
 | `failedPinAttempts` | starts at 0 |
+| `generation` | a number the store assigns to each row and never reuses. Retrieval acts only on the row it verified, so a stale request can't consume or charge a newer message that took the same id. |
 | `protocolVersion` | the protocol generation of the server that accepted the message. The server records it and never reads it from the blob, so it says nothing about what the uploaded bytes actually contain. Clients still validate every header. |
 
-A message counts as expired when `expiresAt <= now`.
+A message counts as expired when `expiresAt <= now`. An expired row gives up its id at once: a new message may take the id before the next sweep.
 
 ### Concurrency and resources
 
 - Per-id serialization uses a bounded scheme: fixed striped locks or conditional row revisions, never an uncapped map.
 - Argon2 and SQLite run on a bounded blocking pool. Concurrent Argon2 operations and their queue each have their own limit. No database connection or global lock is held while hashing.
+- A retrieval takes one of `max_concurrent_hashes + max_queued_hashes` admission slots before it waits for anything (its id's lock or a hash permit), and gets 503 when none is free. The slot stays taken until the retrieval's commit finishes, even if the client disconnects.
 - Admission accounts for in-flight request bodies and hashing memory as well as stored bytes.
 - A cancelled request never reports success before its commit. Blocking work that has already started runs to its commit or rollback.
 
@@ -357,8 +360,7 @@ Multiple server instances remain out of scope in both modes.
 
 ### Rate limiting
 
-- Fixed window, counted per client address and per bucket. It applies to `/api/messages/**` only. Pages, static files, and `/api/config` are not limited.
-- POST requests use the `create` bucket (10 per minute), GET requests use the `retrieve` bucket (30 per minute).
+- Fixed window, counted per client address and per bucket. It applies to the two message endpoints only: `POST /api/messages` uses the `create` bucket (10 per minute) and `GET /api/messages/{id}/retrieve` the `retrieve` bucket (30 per minute). Pages, static files, `/api/config`, and requests to other paths or methods (which do no work and get 404 or 405) are not limited.
 - The client address is the socket peer address, unless that peer is in `trusted_proxies` (empty by default). For a trusted peer, the server reads only `X-Forwarded-For` (`Forwarded` is ignored). It walks the list from the right, skipping addresses that are themselves trusted proxies, and takes the first untrusted address. That way a fake left-most entry such as `spoofed, real-client` can't pick the bucket. A missing, malformed, or over-long header (more than 1024 bytes or 32 addresses), more than one `X-Forwarded-For` header, or a chain made only of trusted proxies falls back to the peer address.
 - Limiter state is bounded: at most `max_tracked_keys` counters, expired counters leave in window order (amortized constant work per request), and at the cap new addresses get 429 instead of evicting live counters.
 
@@ -370,6 +372,7 @@ Settings come from, highest precedence first: command-line options, environment 
 - An unknown key, from any source, is an error.
 - Lists are comma-separated in environment variables, e.g. `PINVEIL_MESSAGES__TTL_PRESETS=15m,30m,1h`.
 - Giving a single-value option twice on the command line is an error.
+- TTL settings must be whole seconds, and `messages.max_ttl` at most 3650 days, so every expiry can be shown and stored.
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -413,6 +416,10 @@ The server refuses to start if:
 - the limits exceed what the browser zip (ZIP32) supports.
 
 The final default values of these limits come from fixtures and benchmarks during implementation. The protocol ceilings and the KDF range are constants, not configuration (see [Validation](#validation)).
+
+### Logging
+
+The server writes one line per request to stderr: method, path, status, and duration. Headers, query strings, and bodies are never logged. The path contains the message id, which is public. `PINVEIL_LOG` sets the level and filter (default `info`), using `tracing` filter syntax such as `warn` or `pinveil_server=debug`. It is not a configuration key, since it has no `__`.
 
 ## Web UI
 

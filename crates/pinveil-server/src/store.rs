@@ -2,6 +2,11 @@
 //! seam the service uses; [`MemoryStore`] is the default backend. Every method is a single
 //! atomic step, so the service decides the order and the store never recreates a row it
 //! no longer has.
+//!
+//! Each stored row gets a generation number that is never reused. Retrieval verifies the
+//! PIN against one row's metadata and then acts with that row's generation, so if the row
+//! expired, was swept, and a new message took the same id in the meantime, the stale
+//! request finds nothing instead of consuming or burning the new message.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -22,6 +27,8 @@ pub struct NewMessage {
 /// What retrieval needs before deciding: everything except the blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageMeta {
+    /// Identifies this stored row; never reused for another row.
+    pub generation: u64,
     pub pin_salt: String,
     pub pin_verifier: String,
     pub expires_at: SystemTime,
@@ -68,13 +75,18 @@ pub trait Store: Send + Sync + 'static {
     fn insert(&self, message: NewMessage, now: SystemTime) -> Result<(), InsertError>;
     /// The message's metadata, if it is stored.
     fn meta(&self, id: &str) -> Result<Option<MessageMeta>, StoreError>;
-    /// Counts a wrong PIN, deleting the message at `max_attempts`. `None` if the message is
-    /// already gone; a missing row is never recreated.
-    fn record_failure(&self, id: &str, max_attempts: u32) -> Result<Option<Attempt>, StoreError>;
-    /// Removes the message and returns its blob, if it was stored.
-    fn consume(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError>;
-    /// Removes the message, if it was stored.
-    fn remove(&self, id: &str) -> Result<bool, StoreError>;
+    /// Counts a wrong PIN against row `generation`, deleting it at `max_attempts`. `None`
+    /// if that row is gone (even if another row now has the id); nothing is recreated.
+    fn record_failure(
+        &self,
+        id: &str,
+        generation: u64,
+        max_attempts: u32,
+    ) -> Result<Option<Attempt>, StoreError>;
+    /// Removes row `generation` and returns its blob, if that row is still stored.
+    fn consume(&self, id: &str, generation: u64) -> Result<Option<Vec<u8>>, StoreError>;
+    /// Removes row `generation`, if that row is still stored.
+    fn remove(&self, id: &str, generation: u64) -> Result<bool, StoreError>;
     /// Removes every message expired at `now`; returns how many.
     fn sweep(&self, now: SystemTime) -> Result<usize, StoreError>;
 }
@@ -90,6 +102,7 @@ struct Entry {
 struct Inner {
     messages: HashMap<String, Entry>,
     bytes: usize,
+    next_generation: u64,
 }
 
 impl Inner {
@@ -97,6 +110,16 @@ impl Inner {
         let entry = self.messages.remove(id)?;
         self.bytes -= entry.blob.len();
         Some(entry)
+    }
+
+    /// Removes the row only if it is still generation `generation`.
+    fn take_generation(&mut self, id: &str, generation: u64) -> Option<Entry> {
+        let current = self.messages.get(id)?.meta.generation;
+        if current == generation {
+            self.take(id)
+        } else {
+            None
+        }
     }
 
     fn sweep(&mut self, now: SystemTime) -> usize {
@@ -154,6 +177,15 @@ impl MemoryStore {
 impl Store for MemoryStore {
     fn insert(&self, message: NewMessage, now: SystemTime) -> Result<(), InsertError> {
         let mut inner = self.lock();
+        // An expired row is logically gone (APP.md invariant 8); it gives up its id at once
+        // instead of holding it until the next sweep.
+        if inner
+            .messages
+            .get(&message.id)
+            .is_some_and(|e| e.meta.is_expired_at(now))
+        {
+            inner.take(&message.id);
+        }
         if inner.messages.contains_key(&message.id) {
             return Err(InsertError::IdTaken(message.blob));
         }
@@ -165,9 +197,12 @@ impl Store for MemoryStore {
             }
         }
         inner.bytes += len;
+        inner.next_generation += 1;
+        let generation = inner.next_generation;
         let entry = Entry {
             blob: message.blob,
             meta: MessageMeta {
+                generation,
                 pin_salt: message.pin_salt,
                 pin_verifier: message.pin_verifier,
                 expires_at: message.expires_at,
@@ -183,9 +218,18 @@ impl Store for MemoryStore {
         Ok(self.lock().messages.get(id).map(|e| e.meta.clone()))
     }
 
-    fn record_failure(&self, id: &str, max_attempts: u32) -> Result<Option<Attempt>, StoreError> {
+    fn record_failure(
+        &self,
+        id: &str,
+        generation: u64,
+        max_attempts: u32,
+    ) -> Result<Option<Attempt>, StoreError> {
         let mut inner = self.lock();
-        let Some(entry) = inner.messages.get_mut(id) else {
+        let Some(entry) = inner
+            .messages
+            .get_mut(id)
+            .filter(|e| e.meta.generation == generation)
+        else {
             return Ok(None);
         };
         entry.meta.failed_attempts += 1;
@@ -197,12 +241,12 @@ impl Store for MemoryStore {
         Ok(Some(Attempt::Counted(failures)))
     }
 
-    fn consume(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(self.lock().take(id).map(|e| e.blob))
+    fn consume(&self, id: &str, generation: u64) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self.lock().take_generation(id, generation).map(|e| e.blob))
     }
 
-    fn remove(&self, id: &str) -> Result<bool, StoreError> {
-        Ok(self.lock().take(id).is_some())
+    fn remove(&self, id: &str, generation: u64) -> Result<bool, StoreError> {
+        Ok(self.lock().take_generation(id, generation).is_some())
     }
 
     fn sweep(&self, now: SystemTime) -> Result<usize, StoreError> {
@@ -259,13 +303,20 @@ mod tests {
     fn inv_7_failures_count_then_burn_and_never_recreate() {
         let store = MemoryStore::new(10, 1000);
         store.insert(message("a", 5, t(100)), t(0)).unwrap();
-        assert_eq!(store.record_failure("a", 3), Ok(Some(Attempt::Counted(1))));
+        let g = store.meta("a").unwrap().unwrap().generation;
+        assert_eq!(
+            store.record_failure("a", g, 3),
+            Ok(Some(Attempt::Counted(1)))
+        );
         assert_eq!(store.meta("a").unwrap().unwrap().failed_attempts, 1);
-        assert_eq!(store.record_failure("a", 3), Ok(Some(Attempt::Counted(2))));
-        assert_eq!(store.record_failure("a", 3), Ok(Some(Attempt::Burned)));
+        assert_eq!(
+            store.record_failure("a", g, 3),
+            Ok(Some(Attempt::Counted(2)))
+        );
+        assert_eq!(store.record_failure("a", g, 3), Ok(Some(Attempt::Burned)));
         assert_eq!(store.meta("a"), Ok(None));
         assert_eq!(
-            store.record_failure("a", 3),
+            store.record_failure("a", g, 3),
             Ok(None),
             "a gone row is not recreated"
         );
@@ -276,8 +327,9 @@ mod tests {
     fn inv_6_consume_is_at_most_once() {
         let store = MemoryStore::new(10, 1000);
         store.insert(message("a", 5, t(100)), t(0)).unwrap();
-        assert_eq!(store.consume("a"), Ok(Some(vec![7; 5])));
-        assert_eq!(store.consume("a"), Ok(None));
+        let g = store.meta("a").unwrap().unwrap().generation;
+        assert_eq!(store.consume("a", g), Ok(Some(vec![7; 5])));
+        assert_eq!(store.consume("a", g), Ok(None));
         assert_eq!(store.usage(), (0, 0));
     }
 
@@ -289,5 +341,25 @@ mod tests {
         assert_eq!(store.sweep(t(9)), Ok(0));
         assert_eq!(store.sweep(t(10)), Ok(1), "expires_at <= now is expired");
         assert!(store.meta("a").unwrap().is_none() && store.meta("b").unwrap().is_some());
+    }
+
+    #[test]
+    fn inv_6_stale_generation_never_touches_a_reused_id() {
+        let store = MemoryStore::new(10, 1000);
+        store.insert(message("a", 5, t(10)), t(0)).unwrap();
+        let old = store.meta("a").unwrap().unwrap().generation;
+        assert_eq!(store.sweep(t(10)), Ok(1));
+        store.insert(message("a", 3, t(100)), t(10)).unwrap();
+        let new = store.meta("a").unwrap().unwrap().generation;
+        assert_ne!(old, new);
+        assert_eq!(store.record_failure("a", old, 1), Ok(None));
+        assert_eq!(store.consume("a", old), Ok(None));
+        assert_eq!(store.remove("a", old), Ok(false));
+        assert_eq!(
+            store.meta("a").unwrap().unwrap().failed_attempts,
+            0,
+            "the new row is untouched"
+        );
+        assert_eq!(store.consume("a", new), Ok(Some(vec![7; 3])));
     }
 }

@@ -77,6 +77,7 @@ impl IdSource for WordIds {
 pub struct HashPool {
     permits: Arc<Semaphore>,
     waiting: AtomicUsize,
+    concurrency: usize,
     max_waiting: usize,
 }
 
@@ -95,6 +96,7 @@ impl HashPool {
         Self {
             permits: Arc::new(Semaphore::new(concurrency)),
             waiting: AtomicUsize::new(0),
+            concurrency,
             max_waiting,
         }
     }
@@ -170,17 +172,29 @@ impl Policy {
     }
 }
 
-/// A created message.
+/// A created message. `expires_at` is already formatted as RFC 3339 UTC.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created {
     pub id: String,
-    pub expires_at: SystemTime,
+    pub expires_at: String,
+}
+
+/// RFC 3339 UTC with whole seconds, or `None` if the time can't be written (past 9999).
+#[must_use]
+pub fn rfc3339(time: SystemTime) -> Option<String> {
+    use std::fmt::Write;
+    let mut out = String::new();
+    write!(out, "{}", humantime::format_rfc3339_seconds(time)).ok()?;
+    Some(out)
 }
 
 pub struct Service {
     store: Arc<dyn Store>,
     verifier: Arc<dyn PinVerifier>,
     pool: HashPool,
+    /// Retrievals admitted at once: those hashing plus those queued, whether they wait for
+    /// a hash permit or for their id's lock. Taken before the retrieval task is spawned.
+    admission: Arc<Semaphore>,
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdSource>,
     stripes: Stripes,
@@ -203,9 +217,11 @@ fn storage_unavailable(_: StoreError) -> ApiError {
 impl Service {
     #[must_use]
     pub fn new(parts: Parts) -> Arc<Self> {
+        let admitted = parts.pool.concurrency + parts.pool.max_waiting;
         Arc::new(Self {
             store: parts.store,
             verifier: parts.verifier,
+            admission: Arc::new(Semaphore::new(admitted)),
             pool: parts.pool,
             clock: parts.clock,
             ids: parts.ids,
@@ -242,8 +258,14 @@ impl Service {
         let salt = pin_salt.clone();
         let pin_verifier = self.pool.run(move || verifier.hash(&pin, &salt)).await?;
 
+        // Compute and format the expiry before anything is stored, so an impossible time is
+        // a refusal and never a failure after the commit.
         let now = self.clock.now();
-        let expires_at = now + ttl;
+        let expires_at = now
+            .checked_add(ttl)
+            .ok_or(ApiError::BadRequest("TTL is outside the allowed range"))?;
+        let expires_at_text =
+            rfc3339(expires_at).ok_or(ApiError::BadRequest("TTL is outside the allowed range"))?;
         let mut blob = Some(blob);
         for _ in 0..MAX_ID_ATTEMPTS {
             let id = self.ids.next_id().map_err(|_| ApiError::Internal)?;
@@ -256,7 +278,12 @@ impl Service {
                 protocol_version: PROTOCOL_VERSION,
             };
             match self.store.insert(message, now) {
-                Ok(()) => return Ok(Created { id, expires_at }),
+                Ok(()) => {
+                    return Ok(Created {
+                        id,
+                        expires_at: expires_at_text,
+                    });
+                }
                 Err(InsertError::IdTaken(returned)) => blob = Some(returned),
                 Err(InsertError::Full) => {
                     return Err(ApiError::ServiceUnavailable("Server storage is full"));
@@ -269,16 +296,24 @@ impl Service {
         ))
     }
 
-    /// Checks the PIN and consumes the message (APP.md retrieval order). Runs in its own
-    /// task, so dropping the returned future (a client disconnect) never skips a commit.
+    /// Checks the PIN and consumes the message (APP.md retrieval order). Admission is
+    /// bounded before anything waits: a retrieval takes a slot first (503 when none is
+    /// free) and holds it in its own task until it finishes, so dropping the returned
+    /// future (a client disconnect) never skips a commit and never frees a slot early.
     pub async fn retrieve(self: &Arc<Self>, id: String, pin: String) -> Result<Vec<u8>, ApiError> {
         if !is_valid_pin(&pin) {
             return Err(ApiError::InvalidPin);
         }
+        let slot = Arc::clone(&self.admission)
+            .try_acquire_owned()
+            .map_err(|_| ApiError::ServiceUnavailable("The server is busy, try again shortly"))?;
         let this = Arc::clone(self);
-        tokio::spawn(async move { this.retrieve_now(&id, pin).await })
-            .await
-            .map_err(|_| ApiError::Internal)?
+        tokio::spawn(async move {
+            let _slot = slot;
+            this.retrieve_now(&id, pin).await
+        })
+        .await
+        .map_err(|_| ApiError::Internal)?
     }
 
     async fn retrieve_now(&self, id: &str, pin: String) -> Result<Vec<u8>, ApiError> {
@@ -288,8 +323,14 @@ impl Service {
             .meta(id)
             .map_err(storage_unavailable)?
             .ok_or(ApiError::Unavailable)?;
+        // Every action below is bound to this row's generation: if the row expires, is
+        // swept, and a new message takes the id during verification, the new message is
+        // never consumed or charged by this request.
+        let generation = meta.generation;
         if meta.is_expired_at(self.clock.now()) {
-            self.store.remove(id).map_err(storage_unavailable)?;
+            self.store
+                .remove(id, generation)
+                .map_err(storage_unavailable)?;
             return Err(ApiError::Unavailable);
         }
         let verifier = Arc::clone(&self.verifier);
@@ -300,7 +341,7 @@ impl Service {
         if !matches {
             return match self
                 .store
-                .record_failure(id, self.policy.max_failed_attempts)
+                .record_failure(id, generation, self.policy.max_failed_attempts)
                 .map_err(storage_unavailable)?
             {
                 Some(_) => Err(ApiError::WrongPin),
@@ -308,7 +349,7 @@ impl Service {
             };
         }
         self.store
-            .consume(id)
+            .consume(id, generation)
             .map_err(storage_unavailable)?
             .ok_or(ApiError::Unavailable)
     }
@@ -476,22 +517,27 @@ mod tests {
         fn meta(&self, id: &str) -> Result<Option<MessageMeta>, StoreError> {
             self.inner.meta(id)
         }
-        fn record_failure(&self, id: &str, max: u32) -> Result<Option<Attempt>, StoreError> {
+        fn record_failure(
+            &self,
+            id: &str,
+            generation: u64,
+            max: u32,
+        ) -> Result<Option<Attempt>, StoreError> {
             if self.fail_record {
                 Err(StoreError)
             } else {
-                self.inner.record_failure(id, max)
+                self.inner.record_failure(id, generation, max)
             }
         }
-        fn consume(&self, id: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        fn consume(&self, id: &str, generation: u64) -> Result<Option<Vec<u8>>, StoreError> {
             if self.fail_consume {
                 Err(StoreError)
             } else {
-                self.inner.consume(id)
+                self.inner.consume(id, generation)
             }
         }
-        fn remove(&self, id: &str) -> Result<bool, StoreError> {
-            self.inner.remove(id)
+        fn remove(&self, id: &str, generation: u64) -> Result<bool, StoreError> {
+            self.inner.remove(id, generation)
         }
         fn sweep(&self, now: SystemTime) -> Result<usize, StoreError> {
             self.inner.sweep(now)
@@ -856,5 +902,300 @@ mod tests {
             out.push(handle.await.unwrap());
         }
         out
+    }
+
+    /// One id for every message, so a replacement reuses the id of an expired one.
+    struct SameId;
+
+    impl IdSource for SameId {
+        fn next_id(&self) -> Result<String, EntropyError> {
+            Ok("same-id".into())
+        }
+    }
+
+    /// Starts a retrieval of "same-id" with `pin`, holds it inside verification, expires and
+    /// replaces the message (by an explicit sweep, or by a create that reclaims space at the
+    /// cap), then lets the stale verification finish.
+    async fn stale_retrieval(
+        pin: &str,
+        reclaim_by_cap: bool,
+    ) -> (Result<Vec<u8>, ApiError>, Arc<Service>, Arc<MemoryStore>) {
+        let gate = Arc::new(Gate::default());
+        let store = Arc::new(MemoryStore::new(
+            if reclaim_by_cap { 1 } else { 10 },
+            10_000,
+        ));
+        let (service, clock) = Setup {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            verifier: Arc::clone(&gate) as Arc<dyn PinVerifier>,
+            ids: Arc::new(SameId),
+            ..Setup::default()
+        }
+        .build();
+        service
+            .create(b"OLD".to_vec(), "111111".into(), "600")
+            .await
+            .unwrap();
+        let stale = tokio::spawn({
+            let (service, pin) = (Arc::clone(&service), pin.to_owned());
+            async move { service.retrieve("same-id".into(), pin).await }
+        });
+        until("the stale verify to start", || {
+            gate.entered.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        clock.advance(600);
+        if !reclaim_by_cap {
+            assert_eq!(service.sweep(), Ok(1));
+        }
+        service
+            .create(b"NEW".to_vec(), "222222".into(), "600")
+            .await
+            .unwrap();
+        gate.open();
+        (stale.await.unwrap(), service, store)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn inv_6_stale_correct_pin_never_consumes_a_replacement() {
+        for reclaim_by_cap in [false, true] {
+            let (stale, service, _) = stale_retrieval("111111", reclaim_by_cap).await;
+            assert_eq!(
+                stale.unwrap_err(),
+                ApiError::Unavailable,
+                "reclaim_by_cap={reclaim_by_cap}"
+            );
+            assert_eq!(
+                service
+                    .retrieve("same-id".into(), "222222".into())
+                    .await
+                    .unwrap(),
+                b"NEW"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn inv_7_stale_wrong_pin_never_charges_a_replacement() {
+        for reclaim_by_cap in [false, true] {
+            let (stale, _, store) = stale_retrieval("999999", reclaim_by_cap).await;
+            assert_eq!(
+                stale.unwrap_err(),
+                ApiError::Unavailable,
+                "reclaim_by_cap={reclaim_by_cap}"
+            );
+            assert_eq!(store.meta("same-id").unwrap().unwrap().failed_attempts, 0);
+        }
+    }
+
+    /// Pool of one permit and one queue slot: two retrievals may be admitted at once.
+    fn admission_setup() -> (Arc<Service>, Arc<Gate>) {
+        let gate = Arc::new(Gate::default());
+        let (service, _) = Setup {
+            // Room for the ~1000 creates it takes to find two ids on one stripe.
+            store: Arc::new(MemoryStore::new(20_000, 1_000_000)),
+            verifier: Arc::clone(&gate) as Arc<dyn PinVerifier>,
+            pool: (1, 1),
+            ..Setup::default()
+        }
+        .build();
+        (service, gate)
+    }
+
+    fn spawn_retrieve(
+        service: &Arc<Service>,
+        id: &str,
+    ) -> tokio::task::JoinHandle<Result<Vec<u8>, ApiError>> {
+        let (service, id) = (Arc::clone(service), id.to_owned());
+        tokio::spawn(async move { service.retrieve(id, PIN.into()).await })
+    }
+
+    const BUSY: ApiError = ApiError::ServiceUnavailable("The server is busy, try again shortly");
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_admission_same_id_waiters_are_bounded() {
+        let (service, gate) = admission_setup();
+        let id = create(&service).await;
+        let first = spawn_retrieve(&service, &id);
+        until("the first verify to hold the permit", || {
+            gate.entered.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        let attempts: Vec<_> = (0..12).map(|_| spawn_retrieve(&service, &id)).collect();
+        // Exactly one more is admitted; the other eleven are refused at once.
+        until("eleven refusals", || {
+            attempts.iter().filter(|a| a.is_finished()).count() == 11
+        })
+        .await;
+        let mut still_waiting = Vec::new();
+        for attempt in attempts {
+            if attempt.is_finished() {
+                assert_eq!(attempt.await.unwrap().unwrap_err(), BUSY);
+            } else {
+                still_waiting.push(attempt);
+            }
+        }
+        assert_eq!(still_waiting.len(), 1);
+        assert_eq!(service.admission.available_permits(), 0);
+        gate.open();
+        assert!(first.await.unwrap().is_ok());
+        assert_eq!(
+            still_waiting.pop().unwrap().await.unwrap().unwrap_err(),
+            ApiError::Unavailable,
+            "already consumed"
+        );
+        until("all slots to be returned", || {
+            service.admission.available_permits() == 2
+        })
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_admission_unrelated_ids_sharing_a_stripe_are_bounded() {
+        let (service, gate) = admission_setup();
+        let first = create(&service).await;
+        let neighbour = loop {
+            let id = create(&service).await;
+            if service.stripe_of(&id) == service.stripe_of(&first) {
+                break id;
+            }
+        };
+        let other = create(&service).await;
+        let running = spawn_retrieve(&service, &first);
+        until("the first verify to hold the permit", || {
+            gate.entered.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        let waiting = spawn_retrieve(&service, &neighbour); // admitted, waits for the shared stripe
+        until("the neighbour to be admitted", || {
+            service.admission.available_permits() == 0
+        })
+        .await;
+        assert_eq!(service.retrieve(other, PIN.into()).await.unwrap_err(), BUSY);
+        gate.open();
+        assert!(running.await.unwrap().is_ok());
+        assert!(waiting.await.unwrap().is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_admission_cancelled_waiter_keeps_its_slot_until_done() {
+        let (service, gate) = admission_setup();
+        let id = create(&service).await;
+        let running = spawn_retrieve(&service, &id);
+        until("the first verify to hold the permit", || {
+            gate.entered.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        let queued = spawn_retrieve(&service, &id);
+        until("the second to be admitted", || {
+            service.admission.available_permits() == 0
+        })
+        .await;
+        queued.abort(); // the client leaves while queued
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            service.admission.available_permits(),
+            0,
+            "the detached work still counts"
+        );
+        assert_eq!(service.retrieve(id, PIN.into()).await.unwrap_err(), BUSY);
+        gate.open();
+        assert!(running.await.unwrap().is_ok());
+        until("all slots to be returned", || {
+            service.admission.available_permits() == 2
+        })
+        .await;
+    }
+
+    async fn concurrent_creates(
+        service: &Arc<Service>,
+        sizes: &[usize],
+    ) -> Vec<(usize, Result<super::Created, ApiError>)> {
+        let handles: Vec<_> = sizes
+            .iter()
+            .map(|&size| {
+                let service = Arc::clone(service);
+                tokio::spawn(async move {
+                    (size, service.create(vec![1; size], PIN.into(), "60").await)
+                })
+            })
+            .collect();
+        let mut out = Vec::new();
+        for handle in handles {
+            out.push(handle.await.unwrap());
+        }
+        out
+    }
+
+    const FULL: ApiError = ApiError::ServiceUnavailable("Server storage is full");
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_caps_concurrent_creates_respect_the_count_cap() {
+        let store = Arc::new(MemoryStore::new(3, 10_000));
+        let (service, _) = Setup {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            pool: (8, 32),
+            ..Setup::default()
+        }
+        .build();
+        let results = concurrent_creates(&service, &[5; 10]).await;
+        assert_eq!(results.iter().filter(|(_, r)| r.is_ok()).count(), 3);
+        assert!(
+            results
+                .iter()
+                .filter(|(_, r)| r.is_err())
+                .all(|(_, r)| r.as_ref().unwrap_err() == &FULL)
+        );
+        assert_eq!(store.usage(), (3, 15));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_caps_concurrent_creates_respect_the_byte_cap() {
+        let store = Arc::new(MemoryStore::new(100, 100));
+        let (service, _) = Setup {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            pool: (8, 32),
+            ..Setup::default()
+        }
+        .build();
+        let results = concurrent_creates(&service, &[30, 40, 50, 20, 60, 30, 40, 50, 20, 60]).await;
+        let stored: usize = results
+            .iter()
+            .filter(|(_, r)| r.is_ok())
+            .map(|(size, _)| size)
+            .sum();
+        assert!(stored <= 100, "{stored}");
+        assert!(
+            results
+                .iter()
+                .filter(|(_, r)| r.is_err())
+                .all(|(_, r)| r.as_ref().unwrap_err() == &FULL)
+        );
+        assert_eq!(
+            store.usage().1,
+            stored,
+            "byte accounting matches what was stored"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn srv_caps_reclamation_under_contention() {
+        let store = Arc::new(MemoryStore::new(3, 10_000));
+        let (service, clock) = Setup {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            pool: (8, 32),
+            ..Setup::default()
+        }
+        .build();
+        let first = concurrent_creates(&service, &[5; 3]).await;
+        assert!(first.iter().all(|(_, r)| r.is_ok()));
+        clock.advance(60); // all three expire
+        let results = concurrent_creates(&service, &[7; 10]).await;
+        assert_eq!(results.iter().filter(|(_, r)| r.is_ok()).count(), 3);
+        assert_eq!(
+            store.usage(),
+            (3, 21),
+            "expired rows were reclaimed exactly once"
+        );
     }
 }

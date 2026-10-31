@@ -16,6 +16,9 @@ use pinveil_core::protocol::{
     KDF_ITERATIONS_MAX, KDF_ITERATIONS_MIN, MAX_FILES_CEILING, MAX_MANIFEST_BYTES_CEILING,
 };
 
+/// Longest TTL accepted, so every expiry stays well inside what RFC 3339 can express.
+const MAX_TTL_LIMIT: Duration = Duration::from_hours(24 * 3650);
+
 /// Largest payload the browser's store-only ZIP32 writer can export.
 const ZIP32_MAX_PAYLOAD_BYTES: usize = 4_000_000_000;
 
@@ -414,6 +417,17 @@ fn build_messages(v: &Values<'_>) -> Result<MessagesConfig, ConfigError> {
         max_manifest_bytes: v.parse("messages.max_manifest_bytes")?,
         pbkdf2_iterations: v.parse("messages.pbkdf2_iterations")?,
     };
+    let all_ttls = [messages.min_ttl, messages.max_ttl, messages.default_ttl]
+        .into_iter()
+        .chain(messages.ttl_presets.iter().copied());
+    if all_ttls.clone().any(|d| d.subsec_nanos() != 0) {
+        return Err(error(
+            "messages TTL settings must be whole seconds (the API and the UI work in seconds)",
+        ));
+    }
+    if messages.max_ttl > MAX_TTL_LIMIT {
+        return Err(error("messages.max_ttl must be at most 3650 days"));
+    }
     if messages.min_ttl < Duration::from_secs(1) || messages.min_ttl > messages.max_ttl {
         return Err(error(
             "messages.min_ttl must be at least 1s and at most messages.max_ttl",
@@ -772,6 +786,17 @@ mod tests {
                 "between min_ttl and max_ttl",
             ),
             ("PINVEIL_MESSAGES__MIN_TTL", "0s", "at least 1s"),
+            ("PINVEIL_MESSAGES__MIN_TTL", "1500ms", "whole seconds"),
+            (
+                "PINVEIL_MESSAGES__TTL_PRESETS",
+                "15m,90500ms",
+                "whole seconds",
+            ),
+            (
+                "PINVEIL_MESSAGES__MAX_TTL",
+                "400000000000s",
+                "at most 3650 days",
+            ),
             (
                 "PINVEIL_MESSAGES__PBKDF2_ITERATIONS",
                 "100000",

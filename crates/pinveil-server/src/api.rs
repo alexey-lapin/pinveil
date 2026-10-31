@@ -6,6 +6,7 @@ use axum::extract::multipart::MultipartError;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Instant;
 
+use axum::body::Bytes;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Multipart, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
@@ -15,7 +16,7 @@ use axum::{Json, Router};
 use serde::Serialize;
 
 use crate::app::AppState;
-use crate::error::ApiError;
+use crate::error::{ApiError, error_response};
 use crate::ratelimit::{Bucket, client_address};
 
 /// Room for the multipart framing and the `pin` and `ttl` parts on top of the blob itself.
@@ -35,7 +36,14 @@ pub fn routes(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/api/messages/{id}/retrieve",
-            get(retrieve).layer(limited(Bucket::Retrieve)),
+            // axum would also run a GET handler for HEAD and drop the body, which would
+            // consume the message without delivering it. HEAD gets an explicit 405 before
+            // any lookup, verification, or attempt.
+            get(retrieve)
+                .head(|| async {
+                    error_response(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed")
+                })
+                .layer(limited(Bucket::Retrieve)),
         )
 }
 
@@ -89,9 +97,14 @@ async fn create(
         // Read the (size-capped) body before answering. Answering with body bytes still
         // unread makes the server close the connection, and some clients (Windows in
         // particular) then see a reset instead of the response.
-        let limit = state.config.messages.max_payload_bytes + MULTIPART_OVERHEAD_BYTES;
-        let _ = axum::body::to_bytes(request.into_body(), limit).await;
-        return Err(ApiError::UnsupportedMediaType);
+        // The route's body limit still applies: over the cap is 413, not 415.
+        return Err(match Bytes::from_request(request, &state).await {
+            Ok(_) => ApiError::UnsupportedMediaType,
+            Err(rejection) if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                ApiError::PayloadTooLarge
+            }
+            Err(_) => ApiError::BadRequest("Could not read the request body"),
+        });
     }
     let mut multipart = Multipart::from_request(request, &state)
         .await
@@ -135,7 +148,7 @@ async fn create(
     let created = state.service.create(blob, pin, &ttl).await?;
     let body = CreateResponse {
         id: created.id,
-        expires_at: humantime::format_rfc3339_seconds(created.expires_at).to_string(),
+        expires_at: created.expires_at,
     };
     Ok((StatusCode::CREATED, Json(body)).into_response())
 }

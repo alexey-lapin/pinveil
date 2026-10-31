@@ -151,6 +151,10 @@ async fn inv_13_framework_errors_use_the_json_shape() {
 async fn cfg_validate_refuses_to_start_and_warns() {
     let stderr = refuses_to_start(&[("PINVEIL_MESSAGES__PBKDF2_ITERATIONS", "1000")]).await;
     assert!(stderr.contains("pbkdf2_iterations"), "{stderr}");
+    let stderr = refuses_to_start(&[("PINVEIL_MESSAGES__MIN_TTL", "1500ms")]).await;
+    assert!(stderr.contains("whole seconds"), "{stderr}");
+    let stderr = refuses_to_start(&[("PINVEIL_MESSAGES__MAX_TTL", "400000000000s")]).await;
+    assert!(stderr.contains("3650 days"), "{stderr}");
     let stderr = refuses_to_start(&[("PINVEIL_NOT__A_SETTING", "x")]).await;
     assert!(stderr.contains("not.a_setting"), "{stderr}");
 

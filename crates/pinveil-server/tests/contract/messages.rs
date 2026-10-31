@@ -387,15 +387,29 @@ async fn srv_admission_pending_uploads_are_bounded() {
             slow = Some(stream);
         }
         let stream = slow.as_mut().expect("just connected");
+        // Anything on the slow socket means it was answered: it lost the race. Collect the
+        // status line across partial reads before checking what it says.
+        let mut answer = Vec::new();
         let mut buf = [0u8; 64];
-        if let Ok(read) =
+        if let Ok(first) =
             tokio::time::timeout(Duration::from_millis(20), stream.read(&mut buf)).await
         {
+            if let Ok(n) = first {
+                answer.extend_from_slice(&buf[..n]);
+                while n > 0 && answer.len() < 12 {
+                    match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await
+                    {
+                        Ok(Ok(m)) if m > 0 => answer.extend_from_slice(&buf[..m]),
+                        _ => break,
+                    }
+                }
+            }
             assert!(
-                read.is_err() || read.unwrap() == 0 || buf.starts_with(b"HTTP/1.1 503"),
-                "unexpected answer to the slow upload"
+                answer.is_empty() || answer.starts_with(b"HTTP/1.1 503"),
+                "unexpected answer to the slow upload: {:?}",
+                String::from_utf8_lossy(&answer)
             );
-            slow = None; // it lost the race and was answered; try again
+            slow = None; // it was answered (or closed); try again
             continue;
         }
         let response = post(&server, form(b"x", PIN, "600")).await;
@@ -416,4 +430,94 @@ async fn srv_admission_pending_uploads_are_bounded() {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[tokio::test]
+async fn http_retrieve_head_never_consumes_or_counts() {
+    let server = Server::start().await;
+    let id = create(&server, b"kept", "600").await;
+    let head = |pin: &'static str| {
+        server
+            .client
+            .head(server.url(&format!("/api/messages/{id}/retrieve")))
+            .header("X-Message-Pin", pin)
+            .send()
+    };
+    for pin in [PIN, "000000", "000000", "000000"] {
+        let response = head(pin).await.unwrap();
+        assert_eq!(response.status(), 405, "HEAD with {pin}");
+        assert_security_headers(&response);
+    }
+    // Three wrong-PIN HEADs counted nothing and the correct one consumed nothing.
+    let got = retrieve(&server, &id, Some(PIN)).await;
+    assert_eq!(got.status(), 200);
+    assert_eq!(got.bytes().await.unwrap().as_ref(), b"kept");
+}
+
+#[tokio::test]
+async fn http_limits_non_multipart_oversize_is_413() {
+    let server = Server::start_with(&[("PINVEIL_MESSAGES__MAX_PAYLOAD_BYTES", "1000")]).await;
+    let small = server
+        .client
+        .post(server.url("/api/messages"))
+        .header("content-type", "text/plain")
+        .body("x")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assert_error(small, 415).await, "Unsupported media type");
+    let big = server
+        .client
+        .post(server.url("/api/messages"))
+        .header("content-type", "text/plain")
+        .body(vec![b'x'; 70_000])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assert_error(big, 413).await, "Payload too large");
+    // Chunked, with no Content-Length to reject up front.
+    let addr = server.base_url.trim_start_matches("http://").to_owned();
+    let stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    let response = tokio::spawn(async move {
+        let mut received = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            received.extend_from_slice(&buf[..n]);
+        }
+        String::from_utf8_lossy(&received).into_owned()
+    });
+    let mut body = format!(
+        "POST /api/messages HTTP/1.1\r\nHost: {addr}\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+    )
+    .into_bytes();
+    for _ in 0..10 {
+        body.extend_from_slice(b"4000\r\n");
+        body.extend_from_slice(&[b'x'; 0x4000]);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(b"0\r\n\r\n");
+    let _ = writer.write_all(&body).await;
+    let response = tokio::time::timeout(Duration::from_secs(10), response)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        response.starts_with("HTTP/1.1 413"),
+        "{:?}",
+        &response[..response.len().min(200)]
+    );
+}
+
+#[tokio::test]
+async fn http_create_longest_allowed_ttl_has_a_valid_expiry() {
+    let server = Server::start_with(&[("PINVEIL_MESSAGES__MAX_TTL", "3650d")]).await;
+    let response = post(&server, form(b"x", PIN, "315360000")).await;
+    assert_eq!(response.status(), 201);
+    let body: Value = response.json().await.unwrap();
+    let expires = body["expiresAt"].as_str().unwrap();
+    assert!(humantime::parse_rfc3339(expires).is_ok(), "{expires}");
 }
