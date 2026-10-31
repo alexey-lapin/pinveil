@@ -6,6 +6,15 @@ use pinveil_server::config::{self, Sources};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Logs go to stderr; stdout carries only the "listening on" line.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("PINVEIL_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     let (config, warnings) = match config::load(&Sources::from_process()) {
         Ok(loaded) => loaded,
         Err(error) => {

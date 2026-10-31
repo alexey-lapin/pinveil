@@ -140,6 +140,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         })
         .layer(middleware::from_fn(json_errors))
         .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn(request_log))
         .with_state(state)
 }
 
@@ -176,6 +177,24 @@ fn html(body: String) -> Response {
 }
 
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
+/// One log line per request: method, path, status, and duration. Never headers, query
+/// strings, or bodies, so PINs and content can't reach the logs (coverage `SRV-logs`).
+/// The path holds the message id, which APP.md accepts as public.
+async fn request_log(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    tracing::info!(
+        %method,
+        path,
+        status = response.status().as_u16(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "request"
+    );
+    response
+}
 
 /// Adds the APP.md security headers to every response, errors included.
 async fn security_headers(request: Request, next: Next) -> Response {
