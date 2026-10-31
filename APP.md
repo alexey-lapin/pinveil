@@ -441,25 +441,44 @@ The server writes one line per request to stderr: method, path, status, and dura
 
 ### `pinveil send [FILE...]`
 
-- Text comes from stdin when stdin isn't a terminal. When it is a terminal, the text comes from an interactive prompt or `$EDITOR` (`--edit`). Combining `--edit` with piped stdin is an error. File paths are arguments. At least one of text and files is required.
+- Text comes from stdin when stdin isn't a terminal, and must be UTF-8 (binary data goes in a file). When stdin is a terminal, the text comes from an interactive prompt (read until end of input) or `$VISUAL`/`$EDITOR` (`--edit`). With file arguments and a terminal stdin there is no prompt: the message holds only the files unless `--edit` adds text. Combining `--edit` with piped stdin is an error. At least one of text and files is required.
+- File paths are arguments. Each must be a regular file with a UTF-8 name. Its MIME type is guessed from the extension, or `application/octet-stream`.
+- Before reading any file, the CLI fetches the server's config and checks the file count, the manifest size, and the exact encrypted size from the files' metadata. A file whose size changes while it is read aborts the send.
 - The CLI generates the passphrase from its embedded wordlist, which it validates once and never fetches.
-- The CLI generates the PIN and writes it to the controlling terminal, with a reminder to send it over a different channel. `--choose-pin` asks for a PIN at a hidden terminal prompt instead.
-- The share URL goes to stdout.
-- Options: `--ttl`, `--server`, `--profile`.
+- The CLI generates the PIN and writes it to the controlling terminal, never to stdout or stderr, with a reminder to send it over a different channel. Without a terminal to show it on, the command fails before any work. `--choose-pin` asks for a PIN at a hidden terminal prompt instead, up to three times.
+- The share URL goes to stdout. The store-mode notice, progress, and the expiry time go to stderr.
+- Options: `--ttl` (a whole number with `s`, `m`, `h`, or `d`, such as `15m`; a bare number is seconds; default: the profile's, then the server's default), `--server`, `--profile`, `--insecure-http`.
 
 ### `pinveil get [URL]`
 
 - By default the CLI asks for the share URL at a hidden terminal prompt. A positional URL is an explicit opt-in, and its help text says it exposes the passphrase in shell history and the process list.
-- The CLI asks for the PIN at a hidden terminal prompt.
+- The CLI asks for the PIN at a hidden terminal prompt. A wrong PIN (403) asks again; the server burns the message after its limit, and the next attempt reports it unavailable.
 - Text goes to stdout. When stdout is a pipe or a file, the bytes are written unchanged. When stdout is a terminal, control sequences are neutralized unless `--raw` is given. Status messages and written file paths go to stderr.
-- Files go to the current directory, or to `--out DIR`.
+- On a terminal, control characters other than newline and tab (and CR in CRLF) are shown in caret notation (`^[`), and C1 controls and bidirectional formatting characters as `<U+XXXX>`.
+- Files go to the current directory, `--out DIR`, or the profile's output directory, which is created if missing.
+- Options: `--out`, `--force`, `--raw`, `--profile`, `--insecure-http`.
+
+### `pinveil profile`
+
+`pinveil profile list`, `show NAME`, `set NAME [--server URL] [--ttl DURATION] [--out DIR] [--default]`, and `remove NAME`. `set` updates only the values given and validates them. `send` and `get` use the profile named by `--profile`, else the default profile, if any. `PINVEIL_CONFIG_DIR` overrides the config directory, for tests and portable setups. `--help` works on every command and is answered from the command spec without echoing any argument.
 
 ### Secrets and streams
 
 - Content and PIN are never accepted as flags or environment variables. Content and PIN never pass through the argument parser. The one exception is the opt-in positional URL, and parser diagnostics redact its fragment.
 - When a required terminal input has no terminal, the command fails with a clear error.
 - The CLI strips the fragment from the URL right away and builds request URLs without it. No error message contains the full URL or the PIN.
-- Exit codes are fixed per failure class: usage, network, server rejection, message unavailable, decryption, output.
+- Exit codes are fixed per failure class:
+
+| Code | Class |
+|---|---|
+| 0 | Success |
+| 1 | Internal error, such as a failing random number generator |
+| 2 | Usage: bad arguments, a bad profile, input over the server's limits, or a required terminal that isn't there |
+| 3 | Network: unreachable server, TLS failure, a redirect, a missing or invalid server config, or a download cut short |
+| 4 | Server rejection: rate limit, full store, too large, or another refused request |
+| 5 | Message unavailable: never created, expired, already opened, or burned |
+| 6 | Decryption: the message arrived but can't be opened |
+| 7 | Output: a file couldn't be written, or the user quit at a collision |
 
 ### HTTP
 
@@ -479,10 +498,10 @@ One policy, shared by the CLI and the browser zip:
 ### File output
 
 1. The CLI validates the whole manifest and plans every destination before writing anything.
-2. It creates each file with `create_new`, relative to the destination directory, with owner-only permissions.
+2. It creates each file with `create_new`, relative to the destination directory, with owner-only permissions (mode 0600 on Unix). On Windows, new files inherit the destination directory's access list, so the docs advise a private directory such as one under the user profile.
 3. With `--force`, it writes to a temp file and renames it over the destination. It never follows an existing symlink or reparse point.
-4. On a collision without `--force`, the decrypted message stays in memory while the CLI asks for another directory or for confirmation. Quitting discards it, and the prompt says so.
-5. On a partial write or a full disk, it removes the files it created and reports the error.
+4. On a collision without `--force`, the decrypted message stays in memory while the CLI asks on the terminal: overwrite, save to another directory, or quit. Quitting discards it, and the prompt says so. Without a terminal to ask on, it fails with exit code 7 and discards the message.
+5. On a partial write or a full disk, it removes the files it created and reports the error. Files already replaced under `--force` stay replaced.
 
 ### Profiles
 

@@ -114,8 +114,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build server
-        run: cargo build --locked -p pinveil-server
+      - name: Build server and CLI
+        run: cargo build --locked -p pinveil-server -p pinveil-cli
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -133,6 +133,7 @@ jobs:
         working-directory: tests/browser
         env:
           PINVEIL_SERVER_BIN: ${{ github.workspace }}/target/debug/pinveil-server
+          PINVEIL_CLI_BIN: ${{ github.workspace }}/target/debug/pinveil
         run: npm test
 
       - name: Upload Playwright report on failure
