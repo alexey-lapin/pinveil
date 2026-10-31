@@ -102,6 +102,11 @@ fn main() -> ExitCode {
                 break;
             }
         }
+        // conpty renders a prompt before the program may have started reading the console;
+        // keys typed in that gap can be lost, so give it a moment on Windows.
+        if cfg!(windows) {
+            std::thread::sleep(Duration::from_millis(300));
+        }
         if session.send_line(reply).is_err() {
             break;
         }

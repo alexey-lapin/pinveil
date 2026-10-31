@@ -220,6 +220,11 @@ impl Tty {
     }
 
     pub fn send_line(&mut self, line: &str) {
+        // conpty renders a prompt before the program may have started reading the console;
+        // keys typed in that gap were occasionally lost, so give it a moment on Windows.
+        if cfg!(windows) {
+            std::thread::sleep(Duration::from_millis(300));
+        }
         self.session.send_line(line).unwrap();
     }
 
