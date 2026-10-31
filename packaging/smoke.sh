@@ -23,7 +23,10 @@ work=$(mktemp -d)
 pids=()
 cleanup() {
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
-  rm -rf "$work"
+  # Leave the work directory first: Windows can't remove the current directory. A temp
+  # dir a just-killed process still holds is not a test failure.
+  cd /
+  rm -rf "$work" 2>/dev/null || true
 }
 trap cleanup EXIT
 
