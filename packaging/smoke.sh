@@ -97,9 +97,10 @@ echo "round trip over loopback HTTP: ok"
 
 if [ "$mode" = tls ]; then
   cd "$work"
-  # Git Bash would rewrite "/CN=..." into a Windows path.
-  export MSYS2_ARG_CONV_EXCL='*'
   echo "creating a private CA and a localhost certificate"
+  # Git Bash would rewrite "/CN=..." into a Windows path; only openssl's arguments are
+  # exempt, other programs still need their paths converted.
+  openssl() { MSYS2_ARG_CONV_EXCL='*' command openssl "$@"; }
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=pinveil smoke test CA" \
     -keyout ca.key -out ca.crt -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null

@@ -11,8 +11,9 @@ RUN mkdir -p /data && chown 65532:65532 /data
 FROM scratch
 ARG TARGETARCH
 COPY --chmod=0755 dist/linux_${TARGETARCH}/pinveil-server /pinveil-server
-# Owned by the runtime user, so a fresh named volume mounted here is writable.
-COPY --from=data /data /data
+# Owned by the runtime user, so a fresh named volume mounted here is writable. COPY resets
+# ownership to root unless --chown is given.
+COPY --from=data --chown=65532:65532 /data /data
 COPY LICENSE NOTICE /licenses/
 USER 65532:65532
 EXPOSE 8080
