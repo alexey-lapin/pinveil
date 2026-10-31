@@ -151,6 +151,9 @@ fn shell(options: &Options) -> Command {
     line.push(format!("< {}", target(&options.stdin)));
     line.push(format!("> {}", target(&options.stdout)));
     line.push("2> CON & echo [exit !ERRORLEVEL!] > CON".to_owned());
+    // conpty can drop the last screen updates when the console closes right after a quick
+    // child; keep it open a moment so the final output is rendered.
+    line.push("& ping -n 2 127.0.0.1 > NUL".to_owned());
     let mut command = Command::new("cmd.exe");
     command
         .arg("/V:ON")

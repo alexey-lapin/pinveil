@@ -32,7 +32,8 @@ async function download(page, trigger) {
 
 test("WEB-roundtrip.text-only with no plaintext, passphrase, or third party on the wire", async ({ page, context, server, requests, sent }) => {
     const { link, pin } = await createMessage(page, server, { text: SECRET_TEXT });
-    expect(link).toMatch(new RegExp(`^${server.url}/message/[a-z-]+-\\d+#[a-z]+(-[a-z]+){3}$`));
+    // EFF words may contain a hyphen themselves (t-shirt), so only the shape is checked.
+    expect(link).toMatch(new RegExp(`^${server.url}/message/[a-z-]+-\\d+#[a-z]+(-[a-z]+){3,}$`));
     const reader = await context.newPage();
     await openMessage(reader, link, pin);
     await expect(reader.locator("#message-output")).toHaveText(SECRET_TEXT);

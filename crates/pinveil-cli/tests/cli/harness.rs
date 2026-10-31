@@ -309,6 +309,9 @@ fn shell(args: &[&str], io: &Io<'_>, exit: &Path) -> Command {
         r#" & echo [exit !ERRORLEVEL!] > "{}""#,
         exit.display()
     );
+    // conpty can drop the last screen updates when the console closes right after a quick
+    // child; keep it open a moment so the CLI's final output is rendered.
+    line.push_str(" & ping -n 2 127.0.0.1 > NUL");
     let mut command = Command::new("cmd.exe");
     command
         .arg("/V:ON")
