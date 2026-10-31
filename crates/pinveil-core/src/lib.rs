@@ -1,16 +1,9 @@
 //! Message format, crypto, and validation shared by `pinveil-server` and the `pinveil` CLI.
 //!
-//! Phase 0 skeleton: only the protocol version exists so far.
+//! The browser implements the same rules in `web/static`. The cross-client vectors in
+//! `tests/vectors` keep the two implementations byte-compatible.
 
-/// The envelope schema version this build writes (APP.md, "Outer envelope").
-pub const PROTOCOL_VERSION: u32 = 2;
+pub mod protocol;
+pub mod wordlist;
 
-#[cfg(test)]
-mod tests {
-    use super::PROTOCOL_VERSION;
-
-    #[test]
-    fn protocol_version_is_two() {
-        assert_eq!(PROTOCOL_VERSION, 2);
-    }
-}
+pub use protocol::PROTOCOL_VERSION;
