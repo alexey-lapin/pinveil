@@ -34,11 +34,16 @@ function byteLength(text) {
     return encoder.encode(text).length;
 }
 
-function manifestJson(text, files) {
+/** `files` here are `{name, mimeType, byteLength}`: the manifest never needs the data. */
+function manifestJson(textBytes, files) {
     return JSON.stringify({
-        text: text === null ? null : { byteLength: text.length },
-        files: files.map((file) => ({ name: file.name, mimeType: file.mimeType, byteLength: file.data.length })),
+        text: textBytes === null ? null : { byteLength: textBytes.length },
+        files: files.map((file) => ({ name: file.name, mimeType: file.mimeType, byteLength: file.byteLength })),
     });
+}
+
+function describe(file) {
+    return { name: file.name, mimeType: file.mimeType, byteLength: file.data.length };
 }
 
 function checkEntries(textBytes, files) {
@@ -61,11 +66,8 @@ function checkEntries(textBytes, files) {
     }
 }
 
-/**
- * Encodes `{text, files: [{name, mimeType, data}]}` (text may be null) for sealing, enforcing
- * `limits` (`{maxFiles, maxManifestBytes}`, at or below the ceilings).
- */
-export function encodePayload({ text = null, files = [] }, limits) {
+/** The checks shared by `measurePayload` and `encodePayload`. `files` are descriptions. */
+function prepare(text, files, limits) {
     if (text !== null && !text.isWellFormed()) {
         throw payloadError("invalid-text");
     }
@@ -78,8 +80,26 @@ export function encodePayload({ text = null, files = [] }, limits) {
     if (manifest.length > limits.maxManifestBytes) {
         throw payloadError("manifest-too-large");
     }
-    const bodyLength = (textBytes?.length ?? 0) + files.reduce((sum, file) => sum + file.data.length, 0);
-    const bytes = new Uint8Array(4 + manifest.length + bodyLength);
+    const bodyLength = (textBytes?.length ?? 0) + files.reduce((sum, file) => sum + file.byteLength, 0);
+    return { textBytes, manifest, length: 4 + manifest.length + bodyLength };
+}
+
+/**
+ * Runs every `encodePayload` check on `{text, files: [{name, mimeType, byteLength}]}` and
+ * returns the encoded length, without the file data. A client can refuse an oversized
+ * message before reading any file.
+ */
+export function measurePayload({ text = null, files = [] }, limits) {
+    return prepare(text, files, limits).length;
+}
+
+/**
+ * Encodes `{text, files: [{name, mimeType, data}]}` (text may be null) for sealing, enforcing
+ * `limits` (`{maxFiles, maxManifestBytes}`, at or below the ceilings).
+ */
+export function encodePayload({ text = null, files = [] }, limits) {
+    const { textBytes, manifest, length } = prepare(text, files.map(describe), limits);
+    const bytes = new Uint8Array(length);
     new DataView(bytes.buffer).setUint32(0, manifest.length, false);
     bytes.set(manifest, 4);
     let offset = 4 + manifest.length;
@@ -166,8 +186,9 @@ export function decodePayload(bytes) {
         body = body.subarray(entry.byteLength);
         return { name: entry.name, mimeType: entry.mimeType, data };
     });
-    checkEntries(textBytes, files);
-    if (!bytesEqual(encoder.encode(manifestJson(textBytes, files)), manifestBytes)) {
+    const described = files.map(describe);
+    checkEntries(textBytes, described);
+    if (!bytesEqual(encoder.encode(manifestJson(textBytes, described)), manifestBytes)) {
         throw payloadError("not-canonical");
     }
     return { text, files };

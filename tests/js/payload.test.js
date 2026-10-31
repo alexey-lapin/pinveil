@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CEILING_LIMITS, decodePayload, encodePayload } from "../../web/static/payload.js";
+import { CEILING_LIMITS, decodePayload, encodePayload, measurePayload } from "../../web/static/payload.js";
 import { MAX_FILES_CEILING } from "../../web/static/protocol.js";
 
 const enc = new TextEncoder();
@@ -111,4 +111,21 @@ test("FMT-fuzz random bytes only ever raise payload errors", () => {
             assert.equal(error.stage, "payload", String(error));
         }
     }
+});
+
+test("WEB-create.measure-before-read matches the encoded length and runs the same checks", () => {
+    const describe = ({ name, mimeType, data }) => ({ name, mimeType, byteLength: data.length });
+    for (const payload of [
+        { text: "hello", files: [] },
+        { text: null, files: [file("a.txt", "abc"), file("ünïcødé 🗝.bin", "\u0000")] },
+        { text: "", files: [file("b", "")] },
+    ]) {
+        const measured = measurePayload({ text: payload.text, files: payload.files.map(describe) }, CEILING_LIMITS);
+        assert.equal(measured, encodePayload(payload, CEILING_LIMITS).length);
+    }
+    const one = { maxFiles: 1, maxManifestBytes: CEILING_LIMITS.maxManifestBytes };
+    rejects(() => measurePayload({ files: [describe(file("a", "")), describe(file("b", ""))] }, one), "too-many-files");
+    rejects(() => measurePayload({ text: "" }, CEILING_LIMITS), "empty");
+    const tight = { maxFiles: 256, maxManifestBytes: 40 };
+    rejects(() => measurePayload({ files: [describe(file("a-long-name.txt", ""))] }, tight), "manifest-too-large");
 });

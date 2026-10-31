@@ -1,85 +1,113 @@
+import { OPEN_WARNING, openErrorText, retrieveErrorText, storeModeNotice } from "./compose.js";
+import { config } from "./config.js";
 import { openPayload } from "./crypto.js";
-import { validatePin } from "./config.js";
-import { setFeedback, parseJson, formatBytes } from "./ui.js";
+import { exportNames } from "./export-names.js";
+import { isValidPin } from "./random.js";
+import { copyText, formatBytes, parseJson, saveFile, setFeedback } from "./ui.js";
+import { zipParts } from "./zip.js";
+
+const $ = (id) => document.getElementById(id);
 
 export function initRetrievePage() {
-    const retrieveForm = document.getElementById("retrieve-form");
-    const retrieveButton = document.getElementById("retrieve-button");
-    const status = document.getElementById("retrieve-status");
-    const outputCard = document.getElementById("output-card");
+    const form = $("retrieve-form");
+    const button = $("retrieve-button");
+    const status = $("retrieve-status");
     const messageId = document.body.dataset.messageId;
     const passphrase = window.location.hash.slice(1);
 
+    $("open-warning").textContent = OPEN_WARNING;
+    $("store-notice").textContent = storeModeNotice(config.storeMode);
+
     if (!passphrase) {
-        setFeedback(status, "This link is missing its passphrase fragment.", "error");
+        // Without the fragment nothing can be decrypted, so don't let the message be consumed.
+        setFeedback(status, "This link is incomplete: the part after # is missing. Ask the sender for the whole link.", "error");
+        button.disabled = true;
+        $("retrieve-pin").disabled = true;
+        return;
     }
 
-    retrieveForm.addEventListener("submit", async (event) => {
+    form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        retrieveButton.disabled = true;
-        setFeedback(status, "Requesting ciphertext from the server...", "success");
-
+        const pin = $("retrieve-pin").value.trim();
+        if (!isValidPin(pin)) {
+            setFeedback(status, "The PIN must be exactly six digits.", "error");
+            return;
+        }
+        button.disabled = true;
+        setFeedback(status, "Fetching the encrypted message...", "success");
+        let blob;
         try {
-            if (!passphrase) {
-                throw new Error("Missing passphrase fragment.");
-            }
-            const pin = document.getElementById("retrieve-pin").value.trim();
-            validatePin(pin);
-
             const response = await fetch(`/api/messages/${encodeURIComponent(messageId)}/retrieve`, {
-                method: "GET",
-                headers: {
-                    "X-Message-Pin": pin
-                },
-                cache: "no-store"
+                headers: { "X-Message-Pin": pin },
+                cache: "no-store",
             });
-
             if (!response.ok) {
-                const errorBody = await parseJson(response);
-                throw new Error(errorBody.error ?? "Message unavailable.");
+                const body = await parseJson(response);
+                setFeedback(status, retrieveErrorText(response.status, body.error), "error");
+                button.disabled = false;
+                return;
             }
+            blob = new Uint8Array(await response.arrayBuffer());
+        } catch {
+            setFeedback(status, "Couldn't reach the server. Check your connection and try again.", "error");
+            button.disabled = false;
+            return;
+        }
 
-            const blobBytes = new Uint8Array(await response.arrayBuffer());
-            renderPayload(await openPayload(blobBytes, passphrase, pin));
-            retrieveForm.classList.add("hidden");
-            outputCard.classList.remove("hidden");
-            setFeedback(status, "Decryption complete.", "success");
+        // From here on the server has deleted the message, so there is no retry.
+        form.classList.add("hidden");
+        try {
+            setFeedback(status, "Decrypting in this browser...", "success");
+            render(await openPayload(blob, passphrase, pin));
+            setFeedback(status, "", null);
         } catch (error) {
-            setFeedback(status, error.message || "Unable to open message.", "error");
-        } finally {
-            retrieveButton.disabled = false;
+            setFeedback(status, openErrorText(error), "error");
         }
     });
 }
 
-// Shows the text or the first file. Phase 3 replaces this with the multi-file view.
-function renderPayload(payload) {
-    const textOutput = document.getElementById("text-output");
-    const fileOutput = document.getElementById("file-output");
-
-    textOutput.classList.add("hidden");
-    fileOutput.classList.add("hidden");
-
+function render(payload) {
     if (payload.text !== null) {
-        const text = payload.text;
-        document.getElementById("message-output").textContent = text;
-        document.getElementById("copy-message-button").onclick = async () => {
-            await navigator.clipboard.writeText(text);
-        };
-        textOutput.classList.remove("hidden");
-        return;
+        $("message-output").textContent = payload.text;
+        $("copy-text-button").addEventListener("click", (event) => copyText(payload.text, event.currentTarget));
+        $("text-output").classList.remove("hidden");
     }
-
-    const [file] = payload.files;
-    const fileBlob = new Blob([file.data], { type: file.mimeType });
-    document.getElementById("file-output-name").textContent = `${file.name} (${formatBytes(fileBlob.size)})`;
-    document.getElementById("download-file-button").onclick = () => {
-        const url = URL.createObjectURL(fileBlob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = file.name;
-        anchor.click();
-        URL.revokeObjectURL(url);
-    };
-    fileOutput.classList.remove("hidden");
+    if (payload.files.length > 0) {
+        const names = exportNames(payload.files.map((file) => file.name));
+        $("download-list").replaceChildren(
+            ...payload.files.map((file, i) => {
+                const item = document.createElement("li");
+                // The original name, shown as plain text; downloads use the safe export name.
+                const name = document.createElement("span");
+                name.className = "file-name";
+                name.textContent = file.name;
+                name.title = file.mimeType;
+                const size = document.createElement("span");
+                size.className = "file-size";
+                size.textContent = formatBytes(file.data.length);
+                const download = document.createElement("button");
+                download.type = "button";
+                download.className = "secondary-action";
+                download.textContent = "Download";
+                download.setAttribute("aria-label", `Download ${file.name}`);
+                download.dataset.exportName = names[i];
+                download.addEventListener("click", () => saveFile([file.data], names[i]));
+                item.append(name, size, download);
+                return item;
+            }),
+        );
+        if (payload.files.length > 1) {
+            const all = $("download-all-button");
+            all.classList.remove("hidden");
+            all.addEventListener("click", () => {
+                try {
+                    saveFile(zipParts(payload.files.map((file, i) => ({ name: names[i], data: file.data }))), "pinveil-files.zip");
+                } catch (error) {
+                    setFeedback($("retrieve-status"), error.message, "error");
+                }
+            });
+        }
+        $("file-output").classList.remove("hidden");
+    }
+    $("output-card").classList.remove("hidden");
 }

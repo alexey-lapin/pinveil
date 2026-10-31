@@ -27,6 +27,7 @@ const JS: &str = "text/javascript; charset=utf-8";
 pub static STATIC: &[Asset] = &[
     web_static!("app.css", "text/css; charset=utf-8"),
     web_static!("app.js", JS),
+    web_static!("compose.js", JS),
     web_static!("config.js", JS),
     web_static!("create-page.js", JS),
     web_static!("crypto.js", JS),
@@ -38,6 +39,7 @@ pub static STATIC: &[Asset] = &[
     web_static!("retrieve-page.js", JS),
     web_static!("ui.js", JS),
     web_static!("wordlist.js", JS),
+    web_static!("zip.js", JS),
     Asset {
         name: "eff_large_wordlist.txt",
         content_type: "text/plain; charset=utf-8",

@@ -10,48 +10,47 @@
 <script id="app-config" type="application/json">{{client_config_json}}</script>
 <main class="shell shell-retrieve">
     <section class="card retrieve-card">
-        <p class="eyebrow">Message</p>
+        <p class="eyebrow">Secure message</p>
+        <p class="notice notice-warning" id="open-warning"></p>
+        <p class="notice" id="store-notice"></p>
 
-        <form id="retrieve-form" class="retrieve-form">
+        <form id="retrieve-form" class="retrieve-form" novalidate>
             <label class="field">
                 <span>PIN</span>
-                <input id="retrieve-pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="123456" required>
+                <input id="retrieve-pin" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="123456" spellcheck="false">
             </label>
 
             <div class="status-row">
                 <button class="primary-action" id="retrieve-button" type="submit">Open message</button>
             </div>
-
-            <div id="retrieve-status" class="feedback" aria-live="polite"></div>
         </form>
+
+        <div id="retrieve-status" class="feedback" aria-live="polite"></div>
     </section>
 
     <section class="card output-card hidden" id="output-card">
         <div id="text-output" class="hidden">
             <div class="result-header">
                 <p class="eyebrow">Decrypted text</p>
-                <h2>Message contents</h2>
             </div>
             <pre id="message-output"></pre>
             <div class="action-row">
-                <button class="secondary-action" type="button" id="copy-message-button">Copy text</button>
-                <span class="inline-note">This content never appeared on the network in plaintext.</span>
+                <button class="secondary-action" type="button" id="copy-text-button">Copy text</button>
             </div>
         </div>
 
         <div id="file-output" class="hidden">
             <div class="result-header">
-                <p class="eyebrow">Decrypted file</p>
-                <h2>Download is ready</h2>
+                <p class="eyebrow">Decrypted files</p>
             </div>
-            <p id="file-output-name"></p>
+            <ul class="file-list" id="download-list"></ul>
             <div class="action-row">
-                <button class="secondary-action" type="button" id="download-file-button">Download file</button>
-                <span class="inline-note">File name and MIME type were stored inside the encrypted payload.</span>
+                <button class="primary-action hidden" type="button" id="download-all-button">Download all (.zip)</button>
             </div>
         </div>
+        <p class="inline-note">The server has deleted this message. Save what you need before closing this page.</p>
     </section>
-    <noscript><p class="card feedback visible">This page needs JavaScript for local cryptography.</p></noscript>
+    <noscript><p class="card feedback error visible">This page needs JavaScript: decryption happens in your browser.</p></noscript>
 </main>
 <script type="module" src="/static/app.js"></script>
 </body>

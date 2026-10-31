@@ -1,209 +1,210 @@
+import {
+    checkMessage,
+    createErrorText,
+    creationLimits,
+    customTtlMinutes,
+    mimeTypeOf,
+    storeModeNotice,
+    textPart,
+    ttlFromMinutes,
+} from "./compose.js";
+import { config } from "./config.js";
 import { sealPayload } from "./crypto.js";
 import { blobLength } from "./envelope.js";
-import { CEILING_LIMITS, encodePayload } from "./payload.js";
-import { generatePassphrase } from "./random.js";
-import { config, validatePin, maxPayloadMegabytes, MAX_CUSTOM_TTL_MINUTES } from "./config.js";
-import { setFeedback, parseJson } from "./ui.js";
+import { encodePayload } from "./payload.js";
+import { generatePassphrase, generatePin, isValidPin } from "./random.js";
+import { copyText, formatBytes, parseJson, setFeedback } from "./ui.js";
 import { loadWordList } from "./wordlist.js";
 
+const $ = (id) => document.getElementById(id);
+
 export function initCreatePage() {
-    const form = document.getElementById("create-form");
-    const ttlPreset = document.getElementById("ttlPreset");
-    const customTtlField = document.getElementById("custom-ttl-field");
-    const status = document.getElementById("create-status");
-    const submitButton = document.getElementById("submit-button");
-    const resultReady = document.getElementById("result-ready");
-    const createInputs = document.getElementById("create-inputs");
-    const copyUrlButton = document.getElementById("copy-url-button");
-    const modeButtons = Array.from(document.querySelectorAll(".mode-chip"));
+    const form = $("create-form");
+    const status = $("create-status");
+    const submitButton = $("submit-button");
+    const pinInput = $("pin");
+    const ttlPreset = $("ttl-preset");
+    /** The picked files, in the order they were added. */
+    let files = [];
 
-    populateTtlOptions(ttlPreset);
-    bindModeSwitcher(modeButtons);
-    initFileDrop();
-
-    ttlPreset.addEventListener("change", () => {
-        customTtlField.classList.toggle("hidden", ttlPreset.value !== "custom");
+    $("store-notice").textContent = storeModeNotice(config.storeMode);
+    $("result-store-notice").textContent = storeModeNotice(config.storeMode);
+    $("file-limits").textContent =
+        `Up to ${config.maxFiles} files, ${formatBytes(config.maxPayloadBytes)} in total. Names and types are encrypted too.`;
+    pinInput.value = generatePin();
+    $("new-pin-button").addEventListener("click", () => {
+        pinInput.value = generatePin();
     });
+    initTtl(ttlPreset);
 
-    copyUrlButton.addEventListener("click", async () => {
-        const shareUrl = document.getElementById("share-url").value;
-        await navigator.clipboard.writeText(shareUrl);
-        setFeedback(status, "Link copied to clipboard.", "success");
+    const renderFiles = () => {
+        const list = $("file-list");
+        list.replaceChildren(
+            ...files.map((file, index) => {
+                const item = document.createElement("li");
+                const name = document.createElement("span");
+                name.className = "file-name";
+                name.textContent = file.name;
+                const size = document.createElement("span");
+                size.className = "file-size";
+                size.textContent = formatBytes(file.size);
+                const remove = document.createElement("button");
+                remove.type = "button";
+                remove.className = "file-clear-btn";
+                remove.textContent = "Remove";
+                remove.setAttribute("aria-label", `Remove ${file.name}`);
+                remove.addEventListener("click", () => {
+                    files = files.filter((_, i) => i !== index);
+                    renderFiles();
+                });
+                item.append(name, size, remove);
+                return item;
+            }),
+        );
+    };
+    const addFiles = (picked) => {
+        files = [...files, ...picked];
+        renderFiles();
+        // An early warning; the same check runs again on submit.
+        try {
+            checkMessage({ text: $("message-text").value, files }, config);
+            setFeedback(status, "", null);
+        } catch (error) {
+            setFeedback(status, error.message, "error");
+        }
+    };
+    initFileDrop(addFiles);
+
+    $("copy-url-button").addEventListener("click", (event) => copyText($("share-url").value, event.currentTarget, $("share-url")));
+    $("copy-pin-button").addEventListener("click", (event) => copyText($("share-pin").value, event.currentTarget, $("share-pin")));
+    $("create-another-button").addEventListener("click", () => {
+        files = [];
+        renderFiles();
+        $("message-text").value = "";
+        $("share-url").value = "";
+        $("share-pin").value = "";
+        pinInput.value = generatePin();
+        $("result-ready").classList.add("hidden");
+        $("create-inputs").classList.remove("hidden");
+        setFeedback(status, "", null);
     });
 
     form.addEventListener("submit", async (event) => {
         event.preventDefault();
         submitButton.disabled = true;
-        setFeedback(status, "Encrypting locally and uploading ciphertext...", "success");
-
         try {
-            const payloadType = document.getElementById("payloadType").value;
-            const pin = document.getElementById("pin").value.trim();
-            const ttlSeconds = resolveTtlSeconds(ttlPreset, document.getElementById("customTtlMinutes"));
-            validatePin(pin);
-
-            const words = await loadWordList();
-            const passphrase = generatePassphrase(words);
-            const payload = await buildPayload(payloadType);
-
-            if (blobLength(payload.length, config.pbkdf2Iterations) > config.maxPayloadBytes) {
-                throw new Error(`Payload exceeds the ${maxPayloadMegabytes()} MB limit before encryption.`);
-            }
-
-            const blob = await sealPayload(payload, passphrase, pin, config.pbkdf2Iterations);
-            const formData = new FormData();
-            formData.append("blob", new Blob([blob]), "blob.bin");
-            formData.append("pin", pin);
-            formData.append("ttl", String(ttlSeconds));
-
-            const response = await fetch("/api/messages", {
-                method: "POST",
-                body: formData,
-                cache: "no-store"
-            });
-
-            const responseBody = await parseJson(response);
-            if (!response.ok) {
-                throw new Error(responseBody.error ?? "Failed to create secure link.");
-            }
-
-            const shareUrl = `${window.location.origin}/message/${responseBody.id}#${passphrase}`;
-            document.getElementById("share-url").value = shareUrl;
-            document.getElementById("expiry-label").textContent = `Expires at ${new Date(responseBody.expiresAt).toLocaleString()}`;
-            createInputs.classList.add("hidden");
-            resultReady.classList.remove("hidden");
-            setFeedback(status, "Secure link generated. Share the URL and PIN separately.", "success");
+            const created = await create({ text: $("message-text").value, files, pin: pinInput.value.trim() }, status);
+            $("share-url").value = created.url;
+            $("share-pin").value = created.pin;
+            $("expiry-label").textContent = `Expires ${new Date(created.expiresAt).toLocaleString()}`;
+            $("create-inputs").classList.add("hidden");
+            $("result-ready").classList.remove("hidden");
+            setFeedback(status, "", null);
         } catch (error) {
-            setFeedback(status, error.message || "Failed to create secure link.", "error");
+            setFeedback(status, createErrorText(error, config), "error");
         } finally {
             submitButton.disabled = false;
         }
     });
 }
 
-function populateTtlOptions(select) {
-    for (const preset of config.ttlPresets ?? []) {
+/** Validates, encrypts, and uploads. Returns `{url, pin, expiresAt}`. */
+async function create({ text, files, pin }, status) {
+    if (!isValidPin(pin)) {
+        throw new Error("The PIN must be exactly six digits.");
+    }
+    const ttlSeconds = selectedTtl();
+    // Every limit is checked from metadata before any file is read.
+    const expectedSize = checkMessage({ text, files }, config);
+
+    setFeedback(status, "Encrypting in this browser...", "success");
+    const words = await loadWordList();
+    const passphrase = generatePassphrase(words);
+    const data = await Promise.all(files.map(async (file) => new Uint8Array(await file.arrayBuffer())));
+    const payload = encodePayload(
+        {
+            text: textPart(text),
+            files: files.map((file, i) => ({ name: file.name, mimeType: mimeTypeOf(file), data: data[i] })),
+        },
+        creationLimits(config),
+    );
+    // A file can change on disk after it was picked; never upload more than was checked.
+    if (blobLength(payload.length, config.pbkdf2Iterations) !== expectedSize) {
+        throw new Error("A file changed after it was added. Remove it and add it again.");
+    }
+    const blob = await sealPayload(payload, passphrase, pin, config.pbkdf2Iterations);
+
+    setFeedback(status, "Uploading ciphertext...", "success");
+    const body = new FormData();
+    // A fixed part filename: the original names exist only inside the ciphertext.
+    body.append("blob", new Blob([blob], { type: "application/octet-stream" }), "blob");
+    body.append("pin", pin);
+    body.append("ttl", String(ttlSeconds));
+    const response = await fetch("/api/messages", { method: "POST", body, cache: "no-store" });
+    const result = await parseJson(response);
+    if (!response.ok) {
+        throw new Error(
+            response.status === 429
+                ? "Too many messages from your address. Wait a minute and try again."
+                : (result.error ?? "The server refused the message."),
+        );
+    }
+    return {
+        url: `${window.location.origin}/message/${encodeURIComponent(result.id)}#${passphrase}`,
+        pin,
+        expiresAt: result.expiresAt,
+    };
+}
+
+function initTtl(select) {
+    for (const preset of config.ttlPresets) {
         const option = document.createElement("option");
         option.value = String(preset.seconds);
         option.textContent = preset.label;
-        if (preset.seconds === config.defaultTtlSeconds) {
-            option.selected = true;
-        }
+        option.selected = preset.seconds === config.defaultTtlSeconds;
         select.append(option);
     }
-    const customOption = document.createElement("option");
-    customOption.value = "custom";
-    customOption.textContent = "Custom";
-    select.append(customOption);
+    const range = customTtlMinutes(config);
+    const field = $("custom-ttl-field");
+    if (range !== null) {
+        const custom = document.createElement("option");
+        custom.value = "custom";
+        custom.textContent = "Custom";
+        select.append(custom);
+        const input = $("custom-ttl-minutes");
+        input.min = String(range.min);
+        input.max = String(range.max);
+        input.value = String(Math.min(Math.max(Math.round(config.defaultTtlSeconds / 60), range.min), range.max));
+        $("custom-ttl-range").textContent = `From ${range.min} to ${range.max} minutes.`;
+    }
+    select.addEventListener("change", () => field.classList.toggle("hidden", select.value !== "custom"));
 }
 
-function initFileDrop() {
-    const fileInput = document.getElementById("messageFile");
-    const dropZone = document.getElementById("file-drop");
-    const idleView = document.getElementById("file-drop-idle");
-    const chosenView = document.getElementById("file-drop-chosen");
-    const chosenName = document.getElementById("chosen-file-name");
-    const clearBtn = document.getElementById("file-clear-btn");
+function selectedTtl() {
+    const select = $("ttl-preset");
+    return select.value === "custom" ? ttlFromMinutes($("custom-ttl-minutes").value, config) : Number(select.value);
+}
 
-    function showFile(name) {
-        chosenName.textContent = name;
-        idleView.classList.add("hidden");
-        chosenView.classList.remove("hidden");
-    }
-
-    function clearFile() {
-        fileInput.value = "";
-        idleView.classList.remove("hidden");
-        chosenView.classList.add("hidden");
-    }
-
-    fileInput.addEventListener("change", () => {
-        if (fileInput.files[0]) showFile(fileInput.files[0].name);
+function initFileDrop(addFiles) {
+    const input = $("message-files");
+    const zone = $("file-drop");
+    input.addEventListener("change", () => {
+        addFiles([...input.files]);
+        // Clearing lets the same file be picked again after a removal.
+        input.value = "";
     });
-
-    clearBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        clearFile();
+    zone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        zone.classList.add("drag-over");
     });
-
-    dropZone.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        dropZone.classList.add("drag-over");
-    });
-
-    dropZone.addEventListener("dragleave", (e) => {
-        if (!dropZone.contains(e.relatedTarget)) {
-            dropZone.classList.remove("drag-over");
+    zone.addEventListener("dragleave", (event) => {
+        if (!zone.contains(event.relatedTarget)) {
+            zone.classList.remove("drag-over");
         }
     });
-
-    dropZone.addEventListener("drop", (e) => {
-        e.preventDefault();
-        dropZone.classList.remove("drag-over");
-        if (e.dataTransfer.files[0]) {
-            fileInput.files = e.dataTransfer.files;
-            showFile(e.dataTransfer.files[0].name);
-        }
+    zone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        zone.classList.remove("drag-over");
+        addFiles([...event.dataTransfer.files]);
     });
-}
-
-function bindModeSwitcher(modeButtons) {
-    const payloadType = document.getElementById("payloadType");
-    const textField = document.getElementById("text-field");
-    const fileField = document.getElementById("file-field");
-
-    for (const button of modeButtons) {
-        button.addEventListener("click", () => {
-            for (const chip of modeButtons) {
-                chip.classList.toggle("is-active", chip === button);
-            }
-            const mode = button.dataset.mode;
-            payloadType.value = mode;
-            textField.classList.toggle("hidden", mode !== "text");
-            fileField.classList.toggle("hidden", mode !== "file");
-        });
-    }
-}
-
-function resolveTtlSeconds(ttlPreset, customTtlInput) {
-    if (ttlPreset.value !== "custom") {
-        return Number(ttlPreset.value);
-    }
-    const minutes = Number(customTtlInput.value);
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_CUSTOM_TTL_MINUTES) {
-        throw new Error("Custom expiry must be between 1 minute and 24 hours.");
-    }
-    return minutes * 60;
-}
-
-async function buildPayload(payloadType) {
-    if (payloadType === "text") {
-        const text = document.getElementById("messageText").value;
-        if (!text) {
-            throw new Error("Enter some text before generating a link.");
-        }
-        return encodePayload({ text }, creationLimits());
-    }
-
-    const file = document.getElementById("messageFile").files[0];
-    if (!file) {
-        throw new Error("Choose a file before generating a link.");
-    }
-    if (file.size > config.maxPayloadBytes) {
-        throw new Error(`The selected file exceeds the ${maxPayloadMegabytes()} MB limit.`);
-    }
-
-    const fileBytes = new Uint8Array(await file.arrayBuffer());
-    return encodePayload(
-        { files: [{ name: file.name, mimeType: file.type || "application/octet-stream", data: fileBytes }] },
-        creationLimits()
-    );
-}
-
-// Phase 3 takes these from the client config; until then, the protocol ceilings apply.
-function creationLimits() {
-    return {
-        maxFiles: config.maxFiles ?? CEILING_LIMITS.maxFiles,
-        maxManifestBytes: config.maxManifestBytes ?? CEILING_LIMITS.maxManifestBytes
-    };
 }

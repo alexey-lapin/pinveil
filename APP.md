@@ -429,6 +429,9 @@ The server writes one line per request to stderr: method, path, status, and dura
 - "Download all" builds a store-only zip in the browser (method 0, CRC-32, UTF-8 names), following PKWARE APPNOTE, from the already decrypted files. Nothing goes to the server. The text stays separately copyable and isn't part of the zip.
 - File names follow the [export name policy](#export-names), both in the zip and as single downloads. The original names are displayed as plain text.
 - Both pages show the store mode. The retrieve page explains that opening deletes the message (see [Retrieve in the browser](#retrieve-in-the-browser)), and that a dropped connection after opening loses it.
+- The create page checks every limit from the files' names, types, and sizes before reading any file. A browser that reports no usable MIME type records `application/octet-stream`. The multipart part carrying the blob always has the filename `blob`.
+- Single downloads and the zip (`pinveil-files.zip`) are saved as `application/octet-stream`, so a stored MIME type can never make the browser render a file.
+- Without a fragment, the retrieve page disables the PIN form, so the message can't be consumed by a link that can't decrypt it.
 
 ## CLI
 
