@@ -78,6 +78,11 @@ fn cli_roundtrip_text_and_files_with_byte_exact_stdout() {
     assert!(shows(&shown, "memory only"), "store notice: {shown}");
 }
 
+/// On Unix the CLI's stdout is the pseudo-terminal, so terminal detection and neutralization
+/// are exercised end to end. The Windows harness can only give stdout as `> CON`, which cmd
+/// opens write-only; `GetConsoleMode` needs read access, so the CLI rightly sees a file there
+/// (a real console stdout has both). On Windows this test checks delivery only;
+/// `display.rs` unit tests cover neutralization on every platform.
 #[test]
 fn cli_output_terminal_neutralizes_control_sequences_unless_raw() {
     let server = Server::start();
@@ -85,21 +90,24 @@ fn cli_output_terminal_neutralizes_control_sequences_unless_raw() {
     let (link, pin) = send(&server, &scratch, Some(TRICKY_TEXT), &[]);
     let shown = get(&scratch, &link, &pin, &[], None);
     assert_eq!(exit_code(&shown), 0, "{shown}");
-    // The escape shows up in visible form. (Only that part is matched: Windows conpty
-    // repaints the start of the line and can split the word before it.)
-    assert!(shows(&shown, "^[[31mred^[[0m"), "{shown}");
+    assert!(shows(&shown, "red"), "{shown}");
     #[cfg(unix)]
-    assert!(
-        !shown.contains("\u{1b}[31m"),
-        "raw escape reached the terminal"
-    );
+    {
+        assert!(shows(&shown, "ansi ^[[31mred^[[0m"), "{shown}");
+        assert!(
+            !shown.contains("\u{1b}[31m"),
+            "raw escape reached the terminal"
+        );
+    }
 
     let (link, pin) = send(&server, &scratch, Some(TRICKY_TEXT), &[]);
     let shown = get(&scratch, &link, &pin, &["--raw"], None);
-    assert!(!shows(&shown, "^[[31m"), "--raw doesn't neutralize");
-    // conpty re-renders colors on Windows, so the raw bytes are checked on Unix only.
+    assert_eq!(exit_code(&shown), 0, "{shown}");
     #[cfg(unix)]
-    assert!(shown.contains("\u{1b}[31m"), "--raw passes escapes through");
+    {
+        assert!(!shows(&shown, "^[[31m"), "--raw doesn't neutralize");
+        assert!(shown.contains("\u{1b}[31m"), "--raw passes escapes through");
+    }
 }
 
 #[test]
