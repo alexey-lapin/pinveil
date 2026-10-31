@@ -42,9 +42,15 @@ fn run_prompt_case(stdin: Stdin) {
 
     let mut session = Session::spawn(shell(stdin, &input, &output)).expect("spawn in a pty");
     session.set_expect_timeout(Some(DEADLINE));
-    session
-        .expect("PIN: ")
-        .expect("prompt shown on the terminal");
+    // Match "PIN:" without the trailing space: Windows ConPTY re-renders the screen and
+    // does not send trailing blanks.
+    if let Err(error) = session.expect("PIN:") {
+        let shown = drain_for(&mut session, Duration::from_secs(2));
+        panic!(
+            "prompt not shown ({error}); the terminal showed: {:?}",
+            String::from_utf8_lossy(&shown)
+        );
+    }
     session.send_line(PIN).unwrap();
 
     // Read everything the terminal shows until the shell and probe have exited, so a late
@@ -91,6 +97,28 @@ where
             // Unix PTYs report EIO once the child side has closed: that is end of output.
             Err(_) if !session.is_alive().unwrap_or(false) => break,
             Err(error) => panic!("reading the terminal failed: {error}"),
+        }
+    }
+    shown
+}
+
+/// Collects whatever the terminal shows within `window`, for failure diagnostics.
+fn drain_for<P, S>(session: &mut Session<P, S>, window: Duration) -> Vec<u8>
+where
+    Session<P, S>: Read + NonBlocking,
+{
+    let _ = session.set_blocking(false);
+    let deadline = Instant::now() + window;
+    let mut shown = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while Instant::now() < deadline {
+        match session.read(&mut chunk) {
+            Ok(n) if n > 0 => shown.extend_from_slice(&chunk[..n]),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // End of output or a closed terminal: nothing more to collect.
+            Ok(_) | Err(_) => break,
         }
     }
     shown
