@@ -20,9 +20,10 @@ pub struct Dir {
 }
 
 impl Dir {
-    pub fn open(path: &Path) -> io::Result<(Self, PathBuf)> {
-        // Resolved once; every later operation uses this path while the handle pins it.
-        let path = std::fs::canonicalize(path)?;
+    pub fn open(given: &Path) -> io::Result<(Self, PathBuf)> {
+        // Resolved once; every later operation uses the resolved path while the handle pins
+        // it. Callers see the path as they gave it.
+        let path = std::fs::canonicalize(given)?;
         let pin = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
@@ -31,13 +32,7 @@ impl Dir {
         if !pin.metadata()?.is_dir() {
             return Err(io::Error::other("not a directory"));
         }
-        Ok((
-            Self {
-                path: path.clone(),
-                _pin: pin,
-            },
-            path,
-        ))
+        Ok((Self { path, _pin: pin }, given.to_path_buf()))
     }
 
     pub fn contains(&self, name: &str) -> io::Result<bool> {
