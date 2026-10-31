@@ -91,14 +91,14 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 ## Crypto and format
 
-| Id | Rule | Owner | Status |
-|---|---|---|---|
-| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | local (macOS; CI pending) |
-| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | local (macOS; CI pending) |
-| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | local (macOS; CI pending) |
-| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | local (macOS; CI pending) |
-| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | local (macOS; CI pending) |
-| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | local (macOS; CI pending) |
+| Id | Rule | Owner | Tests | Status |
+|---|---|---|---|---|
+| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | core `fmt_outer_*`; JS `FMT-outer ...` | local (macOS; CI pending) |
+| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | core `fmt_inner_*`; JS `FMT-inner ...` | local (macOS; CI pending) |
+| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | core proptest `fmt_fuzz_*`; JS `FMT-fuzz ...` | local (macOS; CI pending) |
+| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | core `tests/vectors.rs` `fmt_vectors_*`; JS `tests/js/vectors.test.js` `FMT-vectors ...` | local (macOS; CI pending) |
+| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | core `gen_pin_*`, `gen_rejection_boundary_for_7776`, `gen_entropy_failure_aborts`; JS `GEN-pin ...` | local (macOS; CI pending) |
+| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | core `gen_passphrase_uses_the_validated_list`; JS `GEN-passphrase ...` | local (macOS; CI pending) |
 | EXP-names | Export-name policy: separators, controls, Windows-invalid characters, device names (including superscripts), trailing dots and spaces, case-insensitive duplicates, 255-byte limit with long extensions | P1.6 | core `cli_output_export_names_match_shared_vectors`, `export_names_are_unique_short_and_safe`; JS `export names ...`; both read `tests/vectors/export-names.json` | local (macOS; CI pending) |
 | ZERO-keys | KEK, content key, KDF input, and plaintext buffers are zeroized; AES, AES-KW, and GHASH state is wiped on drop | P1.5 | compile-time `wiped_on_drop::<Aes256Gcm>()` and `::<KwAes256>()` in `crypto.rs`; `zeroize` features on aes-gcm, aes-kw, hmac, sha2. JS can't wipe Web Crypto state; it clears its own byte arrays. | local (macOS; CI pending) |
 | FMT-canonical | Canonical encoding (APP.md): fixed key order, no whitespace or BOM, minimal escaping, well-formed strings | P1.3, P1.4, P1.7 | vectors `escaping in manifest strings ...`, `byte-order mark before the manifest`, `lone high surrogate ...`, `lone low surrogate ...`, BOM text positives | local (macOS; CI pending) |
