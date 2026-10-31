@@ -21,7 +21,7 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | Id | What it proves | Test | Status |
 |---|---|---|---|
 | H-contract | The registered contract suite starts the real `pinveil-server` binary and reaches it | `crates/pinveil-server/tests/contract/main.rs` `harness_reaches_the_real_server_binary` | covered (CI run 41162610508 at 0ff07c4) |
-| H-js | The JS runner loads `web/static` modules under Node Web Crypto | `tests/js/crypto.test.js` "INV-4 round trip ..." (replaced `harness.test.js` in Phase 1) | local (macOS; CI pending) |
+| H-js | The JS runner loads `web/static` modules under Node Web Crypto | `tests/js/crypto.test.js` "INV-4 round trip ..." (replaced `harness.test.js` in Phase 1) | covered (CI run 41165815026 at c0d0b65) |
 | H-pty | A hidden prompt works in a PTY while stdin and stdout are redirected, without echoing the input | `crates/pty-probe/tests/terminal.rs` `hidden_prompt_works_with_stdin_from_a_file`, `hidden_prompt_works_with_stdin_from_a_pipe` | covered (CI run 41162610508 at 0ff07c4) |
 | H-noterm | Without a terminal, the prompt fails clearly (exit 3) | `crates/pty-probe/tests/terminal.rs` `fails_clearly_without_a_terminal` | covered (CI run 41162610508 at 0ff07c4) |
 | H-deps | Bundled SQLite and reqwest with rustls (aws-lc-rs) build and link | `pinveil-server` `bundled_sqlite_links`, `pinveil-cli` `rustls_client_builds` | covered (CI run 41162610508 at 0ff07c4) |
@@ -33,7 +33,7 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | INV-1 | Plaintext, names, and MIME types never leave a client unencrypted. The passphrase never reaches the server. The PIN does, over TLS, and only its verifier is stored. The only TLS exception is `--insecure-http` to loopback. | P1.5, P2.4, P3.4, P4.3, P4.9 | `INV-1.browser-request-capture`, `INV-1.cli-request-capture`, `INV-1.no-raw-pin-stored`, `INV-1.insecure-http-loopback-only` | planned |
 | INV-2 | The fragment is never sent, logged, or put in errors | P3.4, P4.1, P4.3, P4.9 | `INV-2.browser-requests`, `INV-2.cli-requests`, `INV-2.cli-error-redaction`, `INV-2.parser-diagnostics-redacted` | planned |
 | INV-3 | The server treats blobs as opaque bytes | P2.5 | `INV-3.arbitrary-bytes-roundtrip`, `INV-3.no-format-inspection` | planned |
-| INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | core `inv_4_round_trip_needs_both_inputs`; JS `INV-4 round trip ...`; vectors `decrypt: wrong PIN`, `decrypt: wrong passphrase` | local (macOS; CI pending) |
+| INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | core `inv_4_round_trip_needs_both_inputs`; JS `INV-4 round trip ...`; vectors `decrypt: wrong PIN`, `decrypt: wrong passphrase` | covered (CI run 41165815026 at c0d0b65) |
 | INV-5 | The PIN is stored only as a salted, peppered Argon2id hash | P2.4, P5.1 | `INV-5.verifier-composition`, `INV-5.salt-16-bytes`, `INV-5.params-applied`, `INV-5.sqlite-row-has-no-pin` | planned |
 | INV-6 | At-most-once: the consume commits before the response, and a failed commit sends no blob | P2.6, P5.4 | `INV-6.parallel-same-id`, `INV-6.commit-failure-no-bytes`, `INV-6.sqlite-restart-no-resurrection` | planned |
 | INV-7 | Wrong attempts and the burn commit before the response | P2.6, P5.4 | `INV-7.burn-sequence`, `INV-7.concurrent-attempts`, `INV-7.sqlite-attempts-survive-restart` | planned |
@@ -41,9 +41,9 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | INV-9 | One identical 404 for every gone state | P2.6 | `INV-9.unknown-expired-burned-consumed-equal` | planned |
 | INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | planned |
 | INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | planned |
-| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | local for P1.1 (core and JS validation); P3.4 (real page) pending |
+| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | P1.1 parts covered (CI run 41165815026 at c0d0b65); P3.4 (real page) planned |
 | INV-13 | One JSON error shape on every rejection | P2.2, P2.5, P2.6 | `INV-13.unknown-route`, `INV-13.wrong-method`, `INV-13.media-type`, `INV-13.missing-header`, `INV-13.missing-part`, `INV-13.duplicate-part`, `INV-13.malformed-multipart`, `INV-13.oversize`, `INV-13.static-errors` | planned |
-| INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | core `inv_14_*` (envelope, payload, crypto); JS `INV-14.*`; core `inv_14_header_negatives_derive_no_keys` and the JS vector test count key derivations: 0 for every header refusal, 1 otherwise | local (macOS; CI pending) |
+| INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | core `inv_14_*` (envelope, payload, crypto); JS `INV-14.*`; core `inv_14_header_negatives_derive_no_keys` and the JS vector test count key derivations: 0 for every header refusal, 1 otherwise | covered (CI run 41165815026 at c0d0b65) |
 
 ## HTTP interface
 
@@ -60,7 +60,7 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 | Id | Rule | Owner | Status |
 |---|---|---|---|
-| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | local for P1.2 (format, CSPRNG); P2.3 (collision limit) pending |
+| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | P1.2 parts covered (CI run 41165815026 at c0d0b65); P2.3 (collision limit) planned |
 | SRV-caps | Atomic count and byte caps under concurrent creates | P2.3, P5.3 | planned |
 | SRV-serialize | Same id serialized, different ids concurrent (barrier verifier) | P2.6 | planned |
 | SRV-hash-pool | Permit limit, queue limit (503), memory budget, 13-hash default | P2.1, P2.7 | planned |
@@ -93,15 +93,15 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 | Id | Rule | Owner | Tests | Status |
 |---|---|---|---|---|
-| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | core `fmt_outer_*`; JS `FMT-outer ...` | local (macOS; CI pending) |
-| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | core `fmt_inner_*`; JS `FMT-inner ...` | local (macOS; CI pending) |
-| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | core proptest `fmt_fuzz_*`; JS `FMT-fuzz ...` | local (macOS; CI pending) |
-| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | core `tests/vectors.rs` `fmt_vectors_*`; JS `tests/js/vectors.test.js` `FMT-vectors ...` | local (macOS; CI pending) |
-| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | core `gen_pin_*`, `gen_rejection_boundary_for_7776`, `gen_entropy_failure_aborts`; JS `GEN-pin ...` | local (macOS; CI pending) |
-| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | core `gen_passphrase_uses_the_validated_list`; JS `GEN-passphrase ...` | local (macOS; CI pending) |
-| EXP-names | Export-name policy: separators, controls, Windows-invalid characters, device names (including superscripts), trailing dots and spaces, case-insensitive duplicates, 255-byte limit with long extensions | P1.6 | core `cli_output_export_names_match_shared_vectors`, `export_names_are_unique_short_and_safe`; JS `export names ...`; both read `tests/vectors/export-names.json` | local (macOS; CI pending) |
-| ZERO-keys | KEK, content key, KDF input, and plaintext buffers are zeroized; AES, AES-KW, and GHASH state is wiped on drop | P1.5 | compile-time `wiped_on_drop::<Aes256Gcm>()` and `::<KwAes256>()` in `crypto.rs`; `zeroize` features on aes-gcm, aes-kw, hmac, sha2. JS can't wipe Web Crypto state; it clears its own byte arrays. | local (macOS; CI pending) |
-| FMT-canonical | Canonical encoding (APP.md): fixed key order, no whitespace or BOM, minimal escaping, well-formed strings | P1.3, P1.4, P1.7 | vectors `escaping in manifest strings ...`, `byte-order mark before the manifest`, `lone high surrogate ...`, `lone low surrogate ...`, BOM text positives | local (macOS; CI pending) |
+| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | core `fmt_outer_*`; JS `FMT-outer ...` | covered (CI run 41165815026 at c0d0b65) |
+| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | core `fmt_inner_*`; JS `FMT-inner ...` | covered (CI run 41165815026 at c0d0b65) |
+| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | core proptest `fmt_fuzz_*`; JS `FMT-fuzz ...` | covered (CI run 41165815026 at c0d0b65) |
+| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | core `tests/vectors.rs` `fmt_vectors_*`; JS `tests/js/vectors.test.js` `FMT-vectors ...` | covered (CI run 41165815026 at c0d0b65) |
+| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | core `gen_pin_*`, `gen_rejection_boundary_for_7776`, `gen_entropy_failure_aborts`; JS `GEN-pin ...` | covered (CI run 41165815026 at c0d0b65) |
+| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | core `gen_passphrase_uses_the_validated_list`; JS `GEN-passphrase ...` | covered (CI run 41165815026 at c0d0b65) |
+| EXP-names | Export-name policy: separators, controls, Windows-invalid characters, device names (including superscripts), trailing dots and spaces, case-insensitive duplicates, 255-byte limit with long extensions | P1.6 | core `cli_output_export_names_match_shared_vectors`, `export_names_are_unique_short_and_safe`; JS `export names ...`; both read `tests/vectors/export-names.json` | covered (CI run 41165815026 at c0d0b65) |
+| ZERO-keys | KEK, content key, KDF input, and plaintext buffers are zeroized; AES, AES-KW, and GHASH state is wiped on drop | P1.5 | compile-time `wiped_on_drop::<Aes256Gcm>()` and `::<KwAes256>()` in `crypto.rs`; `zeroize` features on aes-gcm, aes-kw, hmac, sha2. JS can't wipe Web Crypto state; it clears its own byte arrays. | covered (CI run 41165815026 at c0d0b65) |
+| FMT-canonical | Canonical encoding (APP.md): fixed key order, no whitespace or BOM, minimal escaping, well-formed strings | P1.3, P1.4, P1.7 | vectors `escaping in manifest strings ...`, `byte-order mark before the manifest`, `lone high surrogate ...`, `lone low surrogate ...`, BOM text positives | covered (CI run 41165815026 at c0d0b65) |
 | KDF-range | The accepted KDF range (provisionally 600,000 to 2,000,000) is benchmarked on representative browsers and CLI targets before v1 freezes it | P7 (decision) | benchmark report with timings at both ends | planned |
 
 ## Web UI
