@@ -85,7 +85,9 @@ fn cli_output_terminal_neutralizes_control_sequences_unless_raw() {
     let (link, pin) = send(&server, &scratch, Some(TRICKY_TEXT), &[]);
     let shown = get(&scratch, &link, &pin, &[], None);
     assert_eq!(exit_code(&shown), 0, "{shown}");
-    assert!(shows(&shown, "ansi ^[[31mred^[[0m"), "{shown}");
+    // The escape shows up in visible form. (Only that part is matched: Windows conpty
+    // repaints the start of the line and can split the word before it.)
+    assert!(shows(&shown, "^[[31mred^[[0m"), "{shown}");
     #[cfg(unix)]
     assert!(
         !shown.contains("\u{1b}[31m"),
