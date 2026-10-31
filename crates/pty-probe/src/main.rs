@@ -4,6 +4,8 @@
 //! comes from a hidden prompt on the controlling terminal, and the result goes to redirected
 //! stdout. Without a terminal it exits with code 3 and a clear message.
 
+#![forbid(unsafe_code)]
+
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 

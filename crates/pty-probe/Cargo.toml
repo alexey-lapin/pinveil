@@ -19,3 +19,15 @@ tempfile = "3.27.0"
 
 [target."cfg(unix)".dev-dependencies]
 libc = "0.2.191"
+
+# Not `workspace = true`: the terminal test needs one audited unsafe call (setsid), so unsafe
+# is `deny` here (overridable at that one site) instead of the workspace's `forbid`. The
+# probe binary itself forbids unsafe in its source.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
