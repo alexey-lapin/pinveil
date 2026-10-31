@@ -6,6 +6,7 @@
 pub mod crypto;
 pub mod entropy;
 pub mod envelope;
+pub mod export_names;
 pub mod generate;
 pub mod payload;
 pub mod protocol;

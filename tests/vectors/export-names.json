@@ -1,0 +1,168 @@
+{
+  "description": "Export-name policy (APP.md, 'Export names'). Both clients map each input list to the output list.",
+  "cases": [
+    {
+      "case": "plain names pass through",
+      "input": [
+        "report.pdf",
+        "ünïcødé 🗝.bin"
+      ],
+      "output": [
+        "report.pdf",
+        "ünïcødé 🗝.bin"
+      ]
+    },
+    {
+      "case": "path separators and traversal",
+      "input": [
+        "../../etc/passwd",
+        "/etc/passwd",
+        "a/b\\c"
+      ],
+      "output": [
+        ".._.._etc_passwd",
+        "_etc_passwd",
+        "a_b_c"
+      ]
+    },
+    {
+      "case": "windows drive, UNC, and alternate data streams",
+      "input": [
+        "C:\\Windows\\system32",
+        "\\\\server\\share\\x",
+        "file.txt:stream"
+      ],
+      "output": [
+        "C__Windows_system32",
+        "__server_share_x",
+        "file.txt_stream"
+      ]
+    },
+    {
+      "case": "characters invalid on windows",
+      "input": [
+        "a*b?c\"d<e>f|g"
+      ],
+      "output": [
+        "a_b_c_d_e_f_g"
+      ]
+    },
+    {
+      "case": "control characters",
+      "input": [
+        "a\u0000b\u001fcde"
+      ],
+      "output": [
+        "a_b_c_d_e"
+      ]
+    },
+    {
+      "case": "dot names and blanks fall back to numbered names",
+      "input": [
+        ".",
+        "..",
+        "...",
+        " "
+      ],
+      "output": [
+        "file-1",
+        "file-2",
+        "file-3",
+        "file-4"
+      ]
+    },
+    {
+      "case": "trailing dots and spaces are trimmed",
+      "input": [
+        "name. . ",
+        "x.txt."
+      ],
+      "output": [
+        "name",
+        "x.txt"
+      ]
+    },
+    {
+      "case": "windows device names are prefixed",
+      "input": [
+        "CON",
+        "con.txt",
+        "Lpt1.log",
+        "COM10",
+        "nul .txt",
+        "aux",
+        "console"
+      ],
+      "output": [
+        "_CON",
+        "_con.txt",
+        "_Lpt1.log",
+        "COM10",
+        "_nul .txt",
+        "_aux",
+        "console"
+      ]
+    },
+    {
+      "case": "duplicates and case-only collisions are numbered",
+      "input": [
+        "a.txt",
+        "a.txt",
+        "A.TXT",
+        "a (2).txt"
+      ],
+      "output": [
+        "a.txt",
+        "a (2).txt",
+        "A (3).TXT",
+        "a (2) (2).txt"
+      ]
+    },
+    {
+      "case": "duplicates without an extension, and dotfiles",
+      "input": [
+        "README",
+        "readme",
+        ".env",
+        ".env"
+      ],
+      "output": [
+        "README",
+        "readme (2)",
+        ".env",
+        ".env (2)"
+      ]
+    },
+    {
+      "case": "unicode case collisions",
+      "input": [
+        "Ä.txt",
+        "ä.txt"
+      ],
+      "output": [
+        "Ä.txt",
+        "ä (2).txt"
+      ]
+    },
+    {
+      "case": "a prefixed long name is cut back to 255 bytes",
+      "input": [
+        "CON.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "output": [
+        "_CON.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ]
+    },
+    {
+      "case": "a numbered long name keeps its extension within 255 bytes",
+      "input": [
+        "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt",
+        "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt"
+      ],
+      "output": [
+        "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt",
+        "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy (2).txt"
+      ]
+    }
+  ]
+}
