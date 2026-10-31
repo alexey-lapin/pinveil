@@ -259,6 +259,8 @@ The publish steps themselves (GitHub release, image tags, tap commit) go to thre
 
 Done when a release candidate goes through the whole workflow without publishing anything stable, and a dry run of the final publish path passes.
 
+As built (`.github/workflows/release.yml`, `release-dispatch.yml`, `packaging/`): the tests run on the built artifacts before staging, and staging then verifies the staged copies against the same `checksums.txt`, so the bytes tested are the bytes published. The conventions (dispatch flow, archive names, release notes categories, tap and bucket tokens, no tap or bucket push for prereleases) follow the owner's other release pipelines, which use GoReleaser. GoReleaser isn't used here: its Rust support cross-compiles with zig, which can't target `x86_64-pc-windows-msvc`, and the C dependencies (aws-lc, bundled SQLite) build natively per runner instead. A Scoop manifest joins the Homebrew formula.
+
 ### Phase 7: Docs and v1.0.0
 
 - **README:** what pinveil is, how to install it, and a quick start for both clients.

@@ -1,7 +1,29 @@
 # Release checklist
 
-Items each release must check before tagging. Phase 6 adds the build, signing, and
-publishing steps.
+## Cutting a release
+
+1. Check the items below.
+2. In a pull request, set `version` under `[workspace.package]` in `Cargo.toml` to the new
+   version: `X.Y.Z`, or `X.Y.Z-rc.N` for a candidate. The binaries print this version, and
+   the release tag must match it.
+3. After merging, run **Release (dispatch)** on `main`. It tags `vX.Y.Z` and calls the
+   release workflow. (Pushing the tag by hand works too.)
+4. The workflow builds every target, tests the exact artifacts (version, embedded assets,
+   no fault interface, CLI round trips over HTTP and over HTTPS with a private CA, the
+   image with a SQLite volume, `brew install` from a temporary formula), then stages them
+   (draft release, candidate image tag) and publishes in a fixed order: GitHub release,
+   image tags, then the Homebrew formula and Scoop manifest. A candidate (`-rc.N`) stops
+   after the prerelease and its version image tag.
+5. If publishing fails partway, the job summary lists what is live. Re-run the publish job
+   only; finished steps are no-ops.
+
+Repository secrets the publish job needs (fine-grained PATs, Contents: read and write):
+
+- `TAP_GITHUB_TOKEN` for `alexey-lapin/homebrew-tap`
+- `SCOOP_GITHUB_TOKEN` for `alexey-lapin/scoop-bucket`
+
+Pushes to `feature/**` that change `packaging/` or the release workflows run the same
+build and tests as a dry run, with nothing staged or published.
 
 ## Store compatibility
 

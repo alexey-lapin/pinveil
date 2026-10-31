@@ -132,9 +132,9 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 | Id | Rule | Owner | Status |
 |---|---|---|---|
-| REL-stage | Build, then stage, then test, then publish. Candidates never touch stable, `latest`, or the tap. | P6.1 to P6.4 | planned |
-| REL-smoke | The staged binaries run, round trip, have embedded assets, and have no failpoints. TLS works with a private CA. Container works with a volume. `brew install` works. | P6.3 | planned |
-| REL-publish | Publish steps are idempotent, partial state is reported, retries reuse the same manifest | P6.4 | planned |
+| REL-stage | Build, then stage, then test, then publish. Candidates never touch stable, `latest`, or the tap. | P6.1 to P6.4 | `release.yml`: `plan` (tag must equal the workspace version; prerelease from a `-` suffix), `build` (clean release builds, `packaging/package.sh`), `checksums`, tests, `stage` (draft release with `sha256sum -c` on the downloaded staged copies, candidate image index from the tested digests), `publish` (stable aliases, tap, and bucket only when not a prerelease) | local (macOS darwin smoke; CI dry run pending); a real candidate run needs a `v*-rc.N` tag (owner's call) |
+| REL-smoke | The staged binaries run, round trip, have embedded assets, and have no failpoints. TLS works with a private CA. Container works with a volume. `brew install` works. | P6.3 | `packaging/smoke.sh` (versions, no fault markers in the binary, pages, script, 7776-word list, CLI round trip on a pty, and with `tls` a private CA in the OS store and an HTTPS round trip) on all four targets; `packaging/container-smoke.sh` (SQLite volume, restart keeps, opens once) on amd64 and arm64; `formula` job (`brew install` and `brew test` from a throwaway tap) | local (macOS darwin smoke; CI dry run pending) |
+| REL-publish | Publish steps are idempotent, partial state is reported, retries reuse the same manifest | P6.4 | `publish`: release edit (no-op when published), `imagetools create` on the tested digest (re-pointing to the same digest), tap and bucket commits only when the file changed; every step writes the job summary, and a failure adds what is and isn't live | planned (needs a real release run) |
 
 ## Java-era gaps (APP.md disposition table)
 
