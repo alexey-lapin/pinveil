@@ -4,6 +4,7 @@
 //! `tests/vectors` keep the two implementations byte-compatible.
 
 pub mod entropy;
+pub mod envelope;
 pub mod generate;
 pub mod protocol;
 pub mod wordlist;
