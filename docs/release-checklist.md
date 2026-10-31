@@ -5,7 +5,9 @@
 1. Check the items below.
 2. In a pull request, set `version` under `[workspace.package]` in `Cargo.toml` to the new
    version: `X.Y.Z`, or `X.Y.Z-rc.N` for a candidate. The binaries print this version, and
-   the release tag must match it.
+   the release tag must match it. Run `cargo build --locked` after a plain `cargo build`
+   (or `cargo update --workspace`) and commit the updated `Cargo.lock` too: the workspace
+   crates' versions are recorded there, and the release builds with `--locked`.
 3. After merging, run **Release (dispatch)** on `main`. It tags `vX.Y.Z` and calls the
    release workflow. (Pushing the tag by hand works too.)
 4. The workflow builds every target, tests the exact artifacts (version, embedded assets,
@@ -14,8 +16,19 @@
    (draft release, candidate image tag) and publishes in a fixed order: GitHub release,
    image tags, then the Homebrew formula and Scoop manifest. A candidate (`-rc.N`) stops
    after the prerelease and its version image tag.
-5. If publishing fails partway, the job summary lists what is live. Re-run the publish job
-   only; finished steps are no-ops.
+5. If publishing fails partway, the job summary lists, per destination, what is published,
+   unchanged, skipped, refused, not published, or unknown. Check any "unknown" by hand,
+   then re-run the publish job only; finished steps are no-ops. A published release is
+   never replaced by a rebuild, and `latest`, the minor alias, the formula, and the Scoop
+   manifest never move to an older version than one already published.
+
+Staging pushes candidate images (`candidate-<version>-<run id>.<attempt>[-arch]`) to the
+public `ghcr.io/alexey-lapin/pinveil` package, including for release candidates. They
+never move `latest` or the stable aliases.
+
+Every archive and the image ship `THIRD-PARTY-NOTICES.txt`, generated from the locked
+dependency set (`packaging/third-party.py`); the build fails if a crate has no license
+file.
 
 Repository secrets the publish job needs (fine-grained PATs, Contents: read and write):
 

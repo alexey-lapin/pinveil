@@ -115,6 +115,19 @@ jobs:
       - name: Test
         run: npm test
 
+  # The release publish logic, against fake gh and docker and local Git repositories.
+  release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Lint the release scripts
+        run: shellcheck packaging/*.sh tests/release/*.sh
+
+      - name: Publish logic tests
+        run: tests/release/publish.test.sh
+
   # Playwright against a real pinveil-server, including browser <-> CLI round trips with
   # the CLI built for each release target. All three engines run on Linux x86_64; the other
   # targets run the suite in Chromium.

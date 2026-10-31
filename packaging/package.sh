@@ -5,7 +5,8 @@
 #
 # Archive names follow pinveil_<version>_<os>_<arch>.<tar.gz|zip>, the same scheme as the
 # other alexey-lapin releases, so the Homebrew formula and Scoop manifest can point at them.
-# Each archive holds both binaries, LICENSE, NOTICE, and the wordlist's license note.
+# Each archive holds both binaries, LICENSE, NOTICE, the wordlist's license note, and
+# THIRD-PARTY-NOTICES.txt for every crate linked into the binaries (packaging/third-party.py).
 set -euo pipefail
 
 target=$1
@@ -28,6 +29,8 @@ for bin in pinveil pinveil-server; do
 done
 cp "$root/LICENSE" "$root/NOTICE" "$stage/"
 cp "$root/assets/README.md" "$stage/WORDLIST-LICENSE.md"
+python=$(command -v python3 || command -v python)
+"$python" "$root/packaging/third-party.py" "$target" "$stage/THIRD-PARTY-NOTICES.txt"
 
 cd "$root/dist"
 if [ "$ext" = zip ]; then

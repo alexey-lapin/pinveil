@@ -24,6 +24,14 @@ fail() {
 }
 
 docker run --rm "$image" --version || fail "the image can't run its binary"
+# The image has no shell; copy the license files out to check them.
+probe=$(docker create "$image")
+docker cp "$probe:/licenses" "$work/licenses" >/dev/null
+docker rm "$probe" >/dev/null
+for file in LICENSE NOTICE THIRD-PARTY-NOTICES.txt; do
+  [ -f "$work/licenses/$file" ] || fail "the image lacks /licenses/$file"
+done
+grep -q "^Applies to tokio " "$work/licenses/THIRD-PARTY-NOTICES.txt" || fail "third-party notices lack tokio"
 docker volume create "$volume" >/dev/null
 docker run -d --name "$name" -p 127.0.0.1::8080 -v "$volume:/data" \
   -e PINVEIL_STORE__MODE=sqlite -e PINVEIL_STORE__PATH=/data/pinveil.db \

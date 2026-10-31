@@ -46,9 +46,12 @@ case "$archive" in
 esac
 server="$work/bin/pinveil-server$exe"
 cli="$work/bin/pinveil$exe"
-for file in "$server" "$cli" "$work/bin/LICENSE" "$work/bin/NOTICE"; do
+for file in "$server" "$cli" "$work/bin/LICENSE" "$work/bin/NOTICE" \
+  "$work/bin/WORDLIST-LICENSE.md" "$work/bin/THIRD-PARTY-NOTICES.txt"; do
   [ -f "$file" ] || fail "missing $(basename "$file") in the archive"
 done
+grep -q "^Applies to tokio " "$work/bin/THIRD-PARTY-NOTICES.txt" || fail "third-party notices lack tokio"
+echo "license files: ok"
 
 "$server" --version | grep -qx "pinveil-server $version (protocol 2)" || fail "server version"
 "$cli" --version | grep -qx "pinveil $version (protocol 2)" || fail "CLI version"

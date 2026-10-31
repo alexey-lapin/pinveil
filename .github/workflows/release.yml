@@ -142,6 +142,7 @@ jobs:
           arch=$([ "${{ matrix.target }}" = x86_64-unknown-linux-musl ] && echo amd64 || echo arm64)
           mkdir -p "image/dist/linux_$arch"
           cp "target/${{ matrix.target }}/release/pinveil-server" "image/dist/linux_$arch/"
+          python3 packaging/third-party.py "${{ matrix.target }}" "image/dist/linux_$arch/THIRD-PARTY-NOTICES.txt"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -272,7 +273,8 @@ jobs:
         if: needs.plan.outputs.release == 'true'
         run: |
           set -euo pipefail
-          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}-${{ matrix.arch }}"
+          # Unique per run and attempt, so a re-run never re-points a candidate tag.
+          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}.${{ github.run_attempt }}-${{ matrix.arch }}"
           docker tag pinveil-candidate:${{ matrix.arch }} "$candidate"
           docker push "$candidate"
           digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$candidate" | sed 's/.*@//')
@@ -327,33 +329,12 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Draft release with the tested archives
+      # A draft gets this run's tested archives; an already published release is never
+      # replaced, only confirmed to be this same build (packaging/publish.sh).
+      - name: Draft release with the tested archives, verified by checksum
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
-          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum -c checksums.txt
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            # Re-run: replace the assets with this run's tested copies.
-            gh release upload "$TAG" pinveil_* checksums.txt --clobber
-          else
-            flags=(--draft --verify-tag --generate-notes --title "$TAG")
-            [ "$PRERELEASE" = true ] && flags+=(--prerelease)
-            gh release create "$TAG" pinveil_* checksums.txt "${flags[@]}"
-          fi
-
-      - name: Verify the staged assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir staged
-          gh release download "$TAG" --dir staged --pattern 'pinveil_*'
-          (cd staged && sha256sum -c ../dist/checksums.txt)
+        run: packaging/publish.sh stage-release "${{ needs.plan.outputs.tag }}" "${{ needs.plan.outputs.prerelease }}" dist
 
       - uses: docker/login-action@v4
         with:
@@ -367,7 +348,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}"
+          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}.${{ github.run_attempt }}"
           docker buildx imagetools create -t "$candidate" \
             "$IMAGE@${{ needs.container.outputs.digest-amd64 }}" \
             "$IMAGE@${{ needs.container.outputs.digest-arm64 }}"
@@ -379,6 +360,10 @@ jobs:
     needs: [plan, stage]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
+    # One publisher at a time, so stable channels are updated in order.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
       packages: write
@@ -392,16 +377,13 @@ jobs:
           name: checksums
           path: dist
 
-      # Fixed order, each step idempotent and keyed to the tested checksums and digest.
-      # A retry re-runs this job only; it never rebuilds.
+      # Fixed order, each step idempotent and keyed to the tested checksums and digest;
+      # each destination's outcome goes to the job summary. A retry re-runs this job only
+      # and never rebuilds. Stable channels never move backwards (packaging/publish.sh).
       - name: 1. Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
-        run: |
-          set -euo pipefail
-          gh release edit "$TAG" --draft=false
-          echo "- published: GitHub release $TAG" >> "$GITHUB_STEP_SUMMARY"
+        run: packaging/publish.sh publish-release "${{ needs.plan.outputs.tag }}"
 
       - uses: docker/login-action@v4
         with:
@@ -413,55 +395,32 @@ jobs:
 
       - name: 2. Tag the tested image
         env:
-          VERSION: ${{ needs.plan.outputs.version }}
-          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
-          DIGEST: ${{ needs.stage.outputs.manifest-digest }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          tags=(-t "$IMAGE:$VERSION")
-          if [ "$PRERELEASE" = false ]; then
-            tags+=(-t "$IMAGE:${VERSION%.*}" -t "$IMAGE:latest")
-          fi
-          docker buildx imagetools create "${tags[@]}" "$IMAGE@$DIGEST"
-          echo "- published: image tags ${tags[*]//-t /} at $DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          packaging/publish.sh tag-image "$IMAGE" "${{ needs.stage.outputs.manifest-digest }}" \
+            "${{ needs.plan.outputs.version }}" "${{ needs.plan.outputs.prerelease }}"
 
       - name: 3. Push the Homebrew formula and Scoop manifest
         if: needs.plan.outputs.prerelease == 'false'
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
           TAG: ${{ needs.plan.outputs.tag }}
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           SCOOP_TOKEN: ${{ secrets.SCOOP_GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          [ -n "$TAP_TOKEN" ] || { echo "TAP_GITHUB_TOKEN is not set" >&2; exit 1; }
-          [ -n "$SCOOP_TOKEN" ] || { echo "SCOOP_GITHUB_TOKEN is not set" >&2; exit 1; }
           python3 packaging/render-manifests.py "$VERSION" \
             "https://github.com/alexey-lapin/pinveil/releases/download/$TAG" dist/checksums.txt out
-          push() { # repo token source destination
-            local repo=$1 token=$2 source=$3 destination=$4
-            rm -rf repo
-            git clone --depth 1 "https://x-access-token:$token@github.com/alexey-lapin/$repo.git" repo
-            mkdir -p "repo/$(dirname "$destination")"
-            cp "$source" "repo/$destination"
-            cd repo
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            if git diff --quiet; then
-              echo "- unchanged: $repo already has $destination for $TAG" >> "$GITHUB_STEP_SUMMARY"
-            else
-              git add "$destination"
-              git commit -m "pinveil $TAG"
-              git push
-              echo "- published: $repo $destination for $TAG" >> "$GITHUB_STEP_SUMMARY"
-            fi
-            cd ..
-          }
-          push homebrew-tap "$TAP_TOKEN" out/pinveil.rb Formula/pinveil.rb
-          push scoop-bucket "$SCOOP_TOKEN" out/pinveil.json pinveil.json
+          status=0
+          packaging/publish.sh push-manifest homebrew-tap "$TAP_TOKEN" out/pinveil.rb Formula/pinveil.rb "$TAG" "$VERSION" || status=1
+          packaging/publish.sh push-manifest scoop-bucket "$SCOOP_TOKEN" out/pinveil.json pinveil.json "$TAG" "$VERSION" || status=1
+          exit "$status"
 
       - name: Report a partial publish
         if: failure()
         run: |
-          echo "### Publish did not finish" >> "$GITHUB_STEP_SUMMARY"
-          echo "Only the steps listed above as published are live. Re-run this job; finished steps are no-ops." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Publish did not finish"
+            echo "The lines above say, per destination, what is published, unchanged, skipped, refused, not published, or unknown. Steps after the failed one did not run, so their destinations are unchanged. Check any \"unknown\" by hand, then re-run this job: finished steps are no-ops."
+          } >> "$GITHUB_STEP_SUMMARY"

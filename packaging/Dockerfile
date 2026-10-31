@@ -15,6 +15,7 @@ COPY --chmod=0755 dist/linux_${TARGETARCH}/pinveil-server /pinveil-server
 # ownership to root unless --chown is given.
 COPY --from=data --chown=65532:65532 /data /data
 COPY LICENSE NOTICE /licenses/
+COPY dist/linux_${TARGETARCH}/THIRD-PARTY-NOTICES.txt /licenses/
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/pinveil-server"]

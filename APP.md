@@ -524,7 +524,7 @@ The CLI creates a fresh private directory (owner-only; on Windows, its access li
 
 People self-host pinveil however they like. Each release, cut from a `v*.*.*` tag, ships:
 
-- `pinveil-server` and `pinveil` binaries for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`, as `pinveil_<version>_<os>_<arch>` archives (`.tar.gz`, or `.zip` on Windows) with `LICENSE`, `NOTICE`, and the wordlist's license note, plus a `checksums.txt` of their SHA-256 hashes,
+- `pinveil-server` and `pinveil` binaries for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`, as `pinveil_<version>_<os>_<arch>` archives (`.tar.gz`, or `.zip` on Windows) with `LICENSE`, `NOTICE`, the wordlist's license note, and `THIRD-PARTY-NOTICES.txt` (every linked crate's license texts), plus a `checksums.txt` of their SHA-256 hashes,
 - a multi-arch server image at `ghcr.io/alexey-lapin/pinveil` (`<version>`, and for stable releases `<major>.<minor>` and `latest`), running as an unprivileged user with a writable `/data` for the SQLite store,
 - a Homebrew formula in `alexey-lapin/homebrew-tap` and a Scoop manifest in `alexey-lapin/scoop-bucket` that install the prebuilt archives (stable releases only).
 
