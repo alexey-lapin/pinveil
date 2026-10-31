@@ -15,7 +15,7 @@ set -euo pipefail
 
 archive=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 version=$2
-tty_run=$3
+tty_run=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 mode=${4:-plain}
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -97,6 +97,9 @@ echo "round trip over loopback HTTP: ok"
 
 if [ "$mode" = tls ]; then
   cd "$work"
+  # Git Bash would rewrite "/CN=..." into a Windows path.
+  export MSYS2_ARG_CONV_EXCL='*'
+  echo "creating a private CA and a localhost certificate"
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=pinveil smoke test CA" \
     -keyout ca.key -out ca.crt -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
@@ -112,6 +115,7 @@ if [ "$mode" = tls ]; then
       sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt ;;
     *) certutil -addstore -f Root ca.crt >/dev/null ;;
   esac
+  echo "trusted the private CA in the system store"
   tls_port=$((port + 1))
   "$python" "$here/tls-proxy.py" leaf.crt leaf.key "$tls_port" "$port" >proxy.out 2>&1 &
   pids+=($!)

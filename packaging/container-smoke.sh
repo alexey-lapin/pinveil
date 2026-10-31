@@ -23,12 +23,19 @@ fail() {
   exit 1
 }
 
+docker run --rm "$image" --version || fail "the image can't run its binary"
 docker volume create "$volume" >/dev/null
 docker run -d --name "$name" -p 127.0.0.1::8080 -v "$volume:/data" \
   -e PINVEIL_STORE__MODE=sqlite -e PINVEIL_STORE__PATH=/data/pinveil.db \
   -e PINVEIL_PIN__PEPPER=container-smoke "$image" >/dev/null
 
 wait_ready() {
+  for _ in $(seq 1 50); do
+    [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] && break
+    sleep 0.1
+  done
+  [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] ||
+    fail "the container is not running: $(docker inspect -f '{{.State.Status}} exit {{.State.ExitCode}}' "$name")"
   base="http://$(docker port "$name" 8080/tcp | head -1)"
   for _ in $(seq 1 100); do
     if curl -fsS "$base/api/config" -o "$work/config.json" 2>/dev/null; then return; fi
