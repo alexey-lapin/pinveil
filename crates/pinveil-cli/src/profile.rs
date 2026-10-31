@@ -47,12 +47,25 @@ pub fn config_dir() -> Result<PathBuf, CliError> {
 }
 
 impl Profiles {
+    /// Loads the profiles file and validates every profile in it, so an invalid one can't be
+    /// used, shown, or saved again.
     pub fn load(dir: &Path) -> Result<Self, CliError> {
+        let profiles = Self::load_unchecked(dir)?;
+        profiles.validate_all(dir)?;
+        Ok(profiles)
+    }
+
+    /// Loads without validating values, for `profile remove`, which must be able to delete
+    /// a bad profile. Errors never quote the file, which may hold anything.
+    fn load_unchecked(dir: &Path) -> Result<Self, CliError> {
         let path = dir.join(FILE_NAME);
         match fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).map_err(|e| {
+            Ok(text) => toml::from_str(&text).map_err(|e: toml::de::Error| {
+                let line = e
+                    .span()
+                    .map_or(0, |span| text[..span.start].matches('\n').count() + 1);
                 CliError::usage(format!(
-                    "{} is not a valid profiles file: {e}",
+                    "{} is not a valid profiles file (problem at line {line}: a syntax error, an unknown key, or a wrong value type). Fix or remove it",
                     path.display()
                 ))
             }),
@@ -62,6 +75,27 @@ impl Profiles {
                 path.display()
             ))),
         }
+    }
+
+    fn validate_all(&self, dir: &Path) -> Result<(), CliError> {
+        for (name, profile) in &self.profiles {
+            validate(profile).map_err(|e| {
+                CliError::usage(format!(
+                    "profile {name:?} in {}: {}. Fix it or run `pinveil profile remove {name}`",
+                    dir.join(FILE_NAME).display(),
+                    e.message
+                ))
+            })?;
+        }
+        if let Some(default) = &self.default
+            && !self.profiles.contains_key(default)
+        {
+            return Err(CliError::usage(format!(
+                "the default profile {default:?} in {} doesn't exist",
+                dir.join(FILE_NAME).display()
+            )));
+        }
+        Ok(())
     }
 
     /// Writes the file atomically, owner-only on Unix.
@@ -100,6 +134,9 @@ impl Profiles {
 /// `pinveil profile ...`.
 pub fn run(args: ProfileArgs) -> Result<(), CliError> {
     let dir = config_dir()?;
+    if let ProfileArgs::Remove(name) = &args {
+        return remove(&dir, name);
+    }
     let mut profiles = Profiles::load(&dir)?;
     match args {
         ProfileArgs::List => {
@@ -144,33 +181,40 @@ pub fn run(args: ProfileArgs) -> Result<(), CliError> {
             eprintln!("Saved profile {name:?} in {}", dir.display());
             Ok(())
         }
-        ProfileArgs::Remove(name) => {
-            if profiles.profiles.remove(&name).is_none() {
-                return Err(CliError::usage(format!(
-                    "there is no profile named {name:?}"
-                )));
-            }
-            if profiles.default.as_deref() == Some(name.as_str()) {
-                profiles.default = None;
-            }
-            profiles.save(&dir)?;
-            eprintln!("Removed profile {name:?}");
-            Ok(())
-        }
+        ProfileArgs::Remove(_) => unreachable!("handled above"),
     }
 }
 
-/// Checks a profile's values before it is saved.
+/// Removes a profile, even an invalid one. The rest must be valid to be saved again.
+fn remove(dir: &Path, name: &str) -> Result<(), CliError> {
+    let mut profiles = Profiles::load_unchecked(dir)?;
+    if profiles.profiles.remove(name).is_none() {
+        return Err(CliError::usage(format!(
+            "there is no profile named {name:?}"
+        )));
+    }
+    if profiles.default.as_deref() == Some(name) {
+        profiles.default = None;
+    }
+    profiles.validate_all(dir)?;
+    profiles.save(dir)?;
+    eprintln!("Removed profile {name:?}");
+    Ok(())
+}
+
+/// Checks a profile's values. Errors describe the problem without quoting the value.
 pub fn validate(profile: &Profile) -> Result<(), CliError> {
     if let Some(server) = &profile.server {
-        // The scheme rule is applied when the profile is used, with that run's
-        // --insecure-http; here only the shape matters.
+        // Plain HTTP to a loopback IP may be stored; using it still needs that run's
+        // --insecure-http. Here only the shape matters.
         ServerUrl::parse(server, true)
             .or_else(|_| ServerUrl::parse(server, false))
-            .map_err(|e| CliError::usage(format!("invalid --server: {e}")))?;
+            .map_err(|e| CliError::usage(format!("invalid server URL: {e}")))?;
     }
     if let Some(ttl) = &profile.ttl {
-        parse_ttl(ttl)?;
+        parse_ttl(ttl).map_err(|_| {
+            CliError::usage("invalid TTL: use a whole number with s, m, h, or d, such as 15m")
+        })?;
     }
     Ok(())
 }
@@ -291,6 +335,53 @@ mod tests {
                 ..Profile::default()
             })
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn cli_profile_file_errors_never_quote_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        for text in [
+            "[profiles.x]\npin = \"SENTINEL_SECRET\"\n",
+            "[profiles.x]\nserver = \"https://e.test/message/id#SENTINEL_SECRET\" invalid\n",
+            "[profiles.x]\nttl = [\"SENTINEL_SECRET\"]\n",
+            "[profiles.x]\nserver = \"https://user:SENTINEL_SECRET@e.test\"\n",
+            "[profiles.x]\nserver = \"https://e.test/message/id#SENTINEL_SECRET\"\n",
+            "[profiles.x]\nserver = \"https://e.test/?q=SENTINEL_SECRET\"\n",
+            "[profiles.x]\nttl = \"SENTINEL_SECRET\"\n",
+        ] {
+            std::fs::write(dir.path().join("profiles.toml"), text).unwrap();
+            let error = Profiles::load(dir.path()).unwrap_err();
+            assert!(
+                !error.message.contains("SENTINEL"),
+                "{text}: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn cli_profile_invalid_loaded_profiles_are_never_saved_again() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("profiles.toml"),
+            "[profiles.bad]\nserver = \"https://user:SECRET@e.test/message/id#FRAGMENT\"\n\n[profiles.good]\nttl = \"1h\"\n",
+        )
+        .unwrap();
+        // Any command that loads the file refuses it, so `set` can't re-save the bad profile.
+        assert!(Profiles::load(dir.path()).is_err());
+        // `remove` can delete the bad one; the rest is saved.
+        super::remove(dir.path(), "bad").unwrap();
+        let saved = std::fs::read_to_string(dir.path().join("profiles.toml")).unwrap();
+        assert!(
+            !saved.contains("SECRET") && !saved.contains("FRAGMENT"),
+            "{saved}"
+        );
+        assert!(
+            Profiles::load(dir.path())
+                .unwrap()
+                .profiles
+                .contains_key("good")
         );
     }
 }

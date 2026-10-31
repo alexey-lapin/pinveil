@@ -53,3 +53,9 @@ pub fn ask(question: &str, what: &str) -> Result<String, CliError> {
         .map_err(|_| no_terminal(what))?;
     Ok(line.trim().to_owned())
 }
+
+/// Checks that the terminal can be both read and written, before any other work.
+pub fn require(what: &str) -> Result<(), CliError> {
+    console(what)?;
+    File::open(TTY_IN).map(drop).map_err(|_| no_terminal(what))
+}

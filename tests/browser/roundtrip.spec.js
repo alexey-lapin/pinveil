@@ -83,8 +83,9 @@ test("WEB-roundtrip.files-only with empty, duplicate, and Unicode names, per-fil
     // WEB-zip: "Download all" is read back by Python's zipfile.
     const zip = await download(reader, reader.locator("#download-all-button"));
     expect(zip.name).toBe("pinveil-files.zip");
+    // Windows runners install Python as `python`.
     const listing = spawnSync(
-        "python3",
+        process.platform === "win32" ? "python" : "python3",
         [
             "-I",
             "-c",

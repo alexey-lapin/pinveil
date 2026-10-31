@@ -1,18 +1,17 @@
 // WEB-roundtrip with the real CLI: a link the browser made opens in the CLI, and a link the
-// CLI made opens in the browser. The CLI runs on a pseudo-terminal through tty_run.py.
+// CLI made opens in the browser. The CLI runs on a pseudo-terminal through the test-only
+// `tty-run` helper (crates/pty-probe), which works on every target, Windows included.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { createMessage, expect, file, openMessage, test } from "./harness.js";
 
-const TTY_RUN = fileURLToPath(new URL("./tty_run.py", import.meta.url));
 const CLI = process.env.PINVEIL_CLI_BIN;
+const TTY_RUN = process.env.PINVEIL_TTY_RUN_BIN;
 
-test.skip(!CLI, "set PINVEIL_CLI_BIN to the pinveil binary to run CLI round trips");
-test.skip(process.platform === "win32", "the pseudo-terminal helper needs a Unix pty");
+test.skip(!CLI || !TTY_RUN, "set PINVEIL_CLI_BIN and PINVEIL_TTY_RUN_BIN to run CLI round trips");
 // One engine is enough for the CLI half; the browser half is covered in every engine elsewhere.
 test.skip(({ browserName }) => browserName !== "chromium", "CLI round trips run in Chromium only");
 
@@ -31,7 +30,7 @@ async function tty(args, { stdin, stdout, answers = [] } = {}) {
     if (stdin) options.push("--stdin", stdin);
     if (stdout) options.push("--stdout", stdout);
     for (const [prompt, reply] of answers) options.push("--answer", prompt, reply);
-    const child = spawn("python3", ["-I", TTY_RUN, ...options, "--", CLI, ...args], {
+    const child = spawn(TTY_RUN, [...options, "--", CLI, ...args], {
         env: { ...process.env, PINVEIL_CONFIG_DIR: join(scratch, "config") },
         cwd: scratch,
     });
@@ -63,7 +62,7 @@ test("WEB-roundtrip.browser-to-cli text and files open in pinveil get", async ({
             ["PIN:", pin],
         ],
     });
-    expect(run.exit, run.terminal).toBe(0);
+    expect(run.exit, run.plain).toBe(0);
     expect(readFileSync(text, "utf8")).toBe("from the browser\nünïcødé");
     expect(readFileSync(join(out, "a.txt"), "utf8")).toBe("file a");
     expect([...readFileSync(join(out, "ünï 🗝.bin"))]).toEqual([0, 1, 2, 255]);
@@ -76,8 +75,9 @@ test("WEB-roundtrip.cli-to-browser a pinveil send link opens in the browser", as
     writeFileSync(attachment, "attached");
     const linkFile = join(scratch, "link.txt");
     const run = await tty(["send", "--server", server.url, "--insecure-http", attachment], { stdin: input, stdout: linkFile });
-    expect(run.exit, run.terminal).toBe(0);
-    const pin = run.terminal.match(/PIN: (\d{6})/)[1];
+    expect(run.exit, run.plain).toBe(0);
+    // Windows conpty may render the space as a cursor move, hence \s*.
+    const pin = run.plain.match(/PIN:\s*(\d{6})/)[1];
     const link = readFileSync(linkFile, "utf8").trim();
 
     await openMessage(page, link, pin);

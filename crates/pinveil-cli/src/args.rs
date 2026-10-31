@@ -120,61 +120,132 @@ pub fn parse(argv: &[String]) -> Result<Command, CliError> {
         return Err(CliError::usage(top_help(&spec)));
     }
     // Help is answered before parsing, from the spec alone: it never echoes an argument.
-    let words: Vec<&str> = argv[1..]
-        .iter()
-        .map(String::as_str)
-        .take_while(|w| *w != "--")
-        .collect();
-    if words.iter().any(|w| matches!(*w, "--help" | "-h" | "help")) {
+    let words: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+    if asks_for_help(&words) {
         return Ok(Command::Help(help_for(&spec, &words)));
     }
 
-    // Cut URL fragments off before parsing, so diagnostics can only ever see `#<hidden>`.
-    // The original word is read back from `argv` by position afterwards. Only URL-like words
-    // are touched, so a file named `notes#1.txt` stays intact.
+    // Every word holding a `#` reaches the parser with what follows it hidden, so no usage
+    // error can echo a passphrase, even from a malformed link. Values are read back from the
+    // original words by position afterwards, so `notes#1.txt` still works.
     let redacted: Vec<String> = argv
         .iter()
         .map(|word| match word.split_once('#') {
-            Some((before, _)) if before.contains("://") => format!("{before}#<hidden>"),
-            _ => word.clone(),
+            Some((before, _)) => format!("{before}#<hidden>"),
+            None => word.clone(),
         })
         .collect();
 
     let parsed =
         usage::parse(&spec, &redacted).map_err(|report| CliError::usage(report.to_string()))?;
     reject_repeated_flags(&parsed)?;
+    let values = Values {
+        parsed: &parsed,
+        argv,
+    };
 
     let names: Vec<&str> = parsed.cmds.iter().map(|c| c.name.as_str()).collect();
     match names.as_slice() {
         [_, "send"] => Ok(Command::Send(SendArgs {
-            common: common(&parsed),
-            ttl: string_flag(&parsed, "ttl"),
-            server: string_flag(&parsed, "server"),
+            common: values.common(),
+            ttl: values.flag("ttl"),
+            server: values.flag("server"),
             edit: bool_flag(&parsed, "edit"),
             choose_pin: bool_flag(&parsed, "choose-pin"),
-            files: multi_arg(&parsed, "file")
-                .into_iter()
-                .map(PathBuf::from)
-                .collect(),
+            files: values.args("file").into_iter().map(PathBuf::from).collect(),
         })),
         [_, "get"] => Ok(Command::Get(GetArgs {
-            common: common(&parsed),
-            out: string_flag(&parsed, "out").map(PathBuf::from),
+            common: values.common(),
+            out: values.flag("out").map(PathBuf::from),
             force: bool_flag(&parsed, "force"),
             raw: bool_flag(&parsed, "raw"),
-            url: restore_url(&parsed, argv),
+            url: values.args("url").into_iter().next().map(Zeroizing::new),
         })),
         [_, "profile", "list"] => Ok(Command::Profile(ProfileArgs::List)),
-        [_, "profile", "show"] => Ok(Command::Profile(ProfileArgs::Show(name_arg(&parsed)))),
-        [_, "profile", "remove"] => Ok(Command::Profile(ProfileArgs::Remove(name_arg(&parsed)))),
+        [_, "profile", "show"] => Ok(Command::Profile(ProfileArgs::Show(values.name()))),
+        [_, "profile", "remove"] => Ok(Command::Profile(ProfileArgs::Remove(values.name()))),
         [_, "profile", "set"] => Ok(Command::Profile(ProfileArgs::Set {
-            name: name_arg(&parsed),
-            server: string_flag(&parsed, "server"),
-            ttl: string_flag(&parsed, "ttl"),
-            out: string_flag(&parsed, "out").map(PathBuf::from),
+            name: values.name(),
+            server: values.flag("server"),
+            ttl: values.flag("ttl"),
+            out: values.flag("out").map(PathBuf::from),
             default: bool_flag(&parsed, "default"),
         })),
         _ => Err(CliError::usage(top_help(&spec))),
+    }
+}
+
+/// Flags that take a value: the word after one is that value, never a help request.
+const VALUE_FLAGS: &[&str] = &["--ttl", "--server", "--profile", "--out"];
+
+/// Whether `--help` or `-h` appears as an option, not as a flag's value, and before `--`.
+fn asks_for_help(words: &[&str]) -> bool {
+    let mut words = words.iter();
+    while let Some(word) = words.next() {
+        match *word {
+            "--" => return false,
+            "--help" | "-h" => return true,
+            flag if VALUE_FLAGS.contains(&flag) => {
+                words.next();
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Reads option and argument values from the original words, by the positions the parser
+/// bound them to, so values come back exactly as typed (fragments included).
+struct Values<'a> {
+    parsed: &'a ParseOutput,
+    argv: &'a [String],
+}
+
+impl Values<'_> {
+    fn common(&self) -> Common {
+        Common {
+            profile: self.flag("profile"),
+            insecure_http: bool_flag(self.parsed, "insecure-http"),
+        }
+    }
+
+    fn flag(&self, name: &str) -> Option<String> {
+        self.parsed.tokens.iter().find_map(|token| {
+            token.roles.iter().find_map(|role| match role {
+                TokenRole::Value { flag, attached, .. } if flag.name == name => {
+                    let word = &self.argv[token.index];
+                    Some(if *attached {
+                        word.split_once('=')
+                            .map_or(word.as_str(), |(_, v)| v)
+                            .to_owned()
+                    } else {
+                        word.clone()
+                    })
+                }
+                _ => None,
+            })
+        })
+    }
+
+    fn args(&self, name: &str) -> Vec<String> {
+        self.parsed
+            .tokens
+            .iter()
+            .filter(|token| {
+                token
+                    .roles
+                    .iter()
+                    .any(|role| matches!(role, TokenRole::Arg { arg, .. } if arg.name == name))
+            })
+            .map(|token| self.argv[token.index].clone())
+            .collect()
+    }
+
+    fn name(&self) -> String {
+        self.args("name")
+            .into_iter()
+            .next()
+            .expect("<name> is required by the spec")
     }
 }
 
@@ -262,13 +333,6 @@ fn help_for(spec: &Spec, words: &[&str]) -> String {
     out
 }
 
-fn common(parsed: &ParseOutput) -> Common {
-    Common {
-        profile: string_flag(parsed, "profile"),
-        insecure_http: bool_flag(parsed, "insecure-http"),
-    }
-}
-
 fn flag_value<'a>(parsed: &'a ParseOutput, name: &str) -> Option<&'a ParseValue> {
     parsed
         .flags
@@ -277,50 +341,8 @@ fn flag_value<'a>(parsed: &'a ParseOutput, name: &str) -> Option<&'a ParseValue>
         .map(|(_, value)| value)
 }
 
-fn string_flag(parsed: &ParseOutput, name: &str) -> Option<String> {
-    match flag_value(parsed, name)? {
-        ParseValue::String(value) => Some(value.clone()),
-        _ => None,
-    }
-}
-
 fn bool_flag(parsed: &ParseOutput, name: &str) -> bool {
     matches!(flag_value(parsed, name), Some(ParseValue::Bool(true)))
-}
-
-fn arg_value<'a>(parsed: &'a ParseOutput, name: &str) -> Option<&'a ParseValue> {
-    parsed
-        .args
-        .iter()
-        .find(|(arg, _)| arg.name == name)
-        .map(|(_, value)| value)
-}
-
-fn multi_arg(parsed: &ParseOutput, name: &str) -> Vec<String> {
-    match arg_value(parsed, name) {
-        Some(ParseValue::MultiString(values)) => values.clone(),
-        Some(ParseValue::String(value)) => vec![value.clone()],
-        _ => Vec::new(),
-    }
-}
-
-fn name_arg(parsed: &ParseOutput) -> String {
-    match arg_value(parsed, "name") {
-        Some(ParseValue::String(value)) => value.clone(),
-        _ => unreachable!("<name> is required by the spec"),
-    }
-}
-
-/// The positional URL with its fragment put back, taken from the original argv word the
-/// parser bound to `url`.
-fn restore_url(parsed: &ParseOutput, argv: &[String]) -> Option<Zeroizing<String>> {
-    let index = parsed.tokens.iter().find_map(|token| {
-        token.roles.iter().find_map(|role| match role {
-            TokenRole::Arg { arg, .. } if arg.name == "url" => Some(token.index),
-            _ => None,
-        })
-    })?;
-    Some(Zeroizing::new(argv[index].clone()))
 }
 
 #[cfg(test)]
@@ -362,6 +384,11 @@ mod tests {
         assert_eq!(
             send(&["notes#1.txt"]).files[0].to_str(),
             Some("notes#1.txt")
+        );
+        assert_eq!(send(&["--ttl=1h", "a#b"]).ttl.as_deref(), Some("1h"));
+        assert_eq!(
+            send(&["--server=https://h/x#y"]).server.as_deref(),
+            Some("https://h/x#y")
         );
     }
 
@@ -431,6 +458,25 @@ mod tests {
                 error.message
             );
         }
+        // Malformed links and stray words with a fragment are hidden too.
+        for words in [
+            &[
+                "get",
+                "output-dir",
+                "https:/example.test/message/id#SENTINEL_SECRET",
+            ][..],
+            &["get", "out", "//example.test/message/id#SENTINEL_SECRET"],
+            &["get", "a", "b#SENTINEL_SECRET"],
+            &["send", "--nope", "x#SENTINEL_SECRET"],
+            &["profile", "show", "a#SENTINEL_SECRET", "extra"],
+        ] {
+            let error = parse(&argv(words)).unwrap_err();
+            assert!(
+                !error.message.contains("SENTINEL"),
+                "{words:?}: {}",
+                error.message
+            );
+        }
         // The parsed value keeps the fragment.
         let Command::Get(get) = parse(&argv(&["get", url])).unwrap() else {
             panic!()
@@ -452,6 +498,24 @@ mod tests {
         assert!(matches!(
             parse(&argv(&["profile", "--help"])).unwrap(),
             Command::Help(text) if text.contains("remove")
+        ));
+        // A value or file named like a help word is just a value.
+        let Command::Get(get) = parse(&argv(&["get", "--out", "help"])).unwrap() else {
+            panic!()
+        };
+        assert_eq!(get.out.as_deref(), Some(std::path::Path::new("help")));
+        let Command::Get(get) = parse(&argv(&["get", "--out=-h"])).unwrap() else {
+            panic!()
+        };
+        assert_eq!(get.out.as_deref(), Some(std::path::Path::new("-h")));
+        assert_eq!(send(&["help"]).files[0].to_str(), Some("help"));
+        assert!(matches!(
+            parse(&argv(&["profile", "set", "help", "--ttl", "1h"])).unwrap(),
+            Command::Profile(ProfileArgs::Set { name, .. }) if name == "help"
+        ));
+        assert!(matches!(
+            parse(&argv(&["send", "-h"])).unwrap(),
+            Command::Help(_)
         ));
         assert_eq!(parse(&argv(&[])).unwrap_err().class, ExitClass::Usage);
     }

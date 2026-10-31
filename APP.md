@@ -445,7 +445,7 @@ The server writes one line per request to stderr: method, path, status, and dura
 - File paths are arguments. Each must be a regular file with a UTF-8 name. Its MIME type is guessed from the extension, or `application/octet-stream`.
 - Before reading any file, the CLI fetches the server's config and checks the file count, the manifest size, and the exact encrypted size from the files' metadata. A file whose size changes while it is read aborts the send.
 - The CLI generates the passphrase from its embedded wordlist, which it validates once and never fetches.
-- The CLI generates the PIN and writes it to the controlling terminal, never to stdout or stderr, with a reminder to send it over a different channel. Without a terminal to show it on, the command fails before any work. `--choose-pin` asks for a PIN at a hidden terminal prompt instead, up to three times.
+- The CLI generates the PIN and writes it to the controlling terminal, never to stdout or stderr, with a reminder to send it over a different channel. `--choose-pin` asks for a PIN at a hidden terminal prompt instead, up to three times. Either way `send` needs a terminal, and without one it fails before reading content or contacting the server.
 - The share URL goes to stdout. The store-mode notice, progress, and the expiry time go to stderr.
 - Options: `--ttl` (a whole number with `s`, `m`, `h`, or `d`, such as `15m`; a bare number is seconds; default: the profile's, then the server's default), `--server`, `--profile`, `--insecure-http`.
 
@@ -454,13 +454,13 @@ The server writes one line per request to stderr: method, path, status, and dura
 - By default the CLI asks for the share URL at a hidden terminal prompt. A positional URL is an explicit opt-in, and its help text says it exposes the passphrase in shell history and the process list.
 - The CLI asks for the PIN at a hidden terminal prompt. A wrong PIN (403) asks again; the server burns the message after its limit, and the next attempt reports it unavailable.
 - Text goes to stdout. When stdout is a pipe or a file, the bytes are written unchanged. When stdout is a terminal, control sequences are neutralized unless `--raw` is given. Status messages and written file paths go to stderr.
-- On a terminal, control characters other than newline and tab (and CR in CRLF) are shown in caret notation (`^[`), and C1 controls and bidirectional formatting characters as `<U+XXXX>`.
+- On a terminal, control characters other than newline and tab (and CR in CRLF) are shown in caret notation (`^[`), and C1 controls and the Unicode `Bidi_Control` characters (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) as `<U+XXXX>`.
 - Files go to the current directory, `--out DIR`, or the profile's output directory, which is created if missing.
 - Options: `--out`, `--force`, `--raw`, `--profile`, `--insecure-http`.
 
 ### `pinveil profile`
 
-`pinveil profile list`, `show NAME`, `set NAME [--server URL] [--ttl DURATION] [--out DIR] [--default]`, and `remove NAME`. `set` updates only the values given and validates them. `send` and `get` use the profile named by `--profile`, else the default profile, if any. `PINVEIL_CONFIG_DIR` overrides the config directory, for tests and portable setups. `--help` works on every command and is answered from the command spec without echoing any argument.
+`pinveil profile list`, `show NAME`, `set NAME [--server URL] [--ttl DURATION] [--out DIR] [--default]`, and `remove NAME`. `set` updates only the values given and validates them. `send` and `get` use the profile named by `--profile`, else the default profile, if any. `PINVEIL_CONFIG_DIR` overrides the config directory, for tests and portable setups. `--help` or `-h` works on every command, but not as an option's value, and is answered from the command spec without echoing any argument. Every argument containing `#` reaches the parser with the rest of it hidden, so no usage error can show a passphrase, even from a malformed link.
 
 ### Secrets and streams
 
@@ -498,14 +498,14 @@ One policy, shared by the CLI and the browser zip:
 ### File output
 
 1. The CLI validates the whole manifest and plans every destination before writing anything.
-2. It creates each file with `create_new`, relative to the destination directory, with owner-only permissions (mode 0600 on Unix). On Windows, new files inherit the destination directory's access list, so the docs advise a private directory such as one under the user profile.
-3. With `--force`, it writes to a temp file and renames it over the destination. It never follows an existing symlink or reparse point.
+2. It opens the destination directory once and pins it: on Unix every operation is relative to its file descriptor, and on Windows the directory handle is held without delete sharing, so neither the directory nor an ancestor can be renamed or replaced until the CLI is done. A link naming the directory itself is resolved once, when it is opened. Each file is created exclusively in that directory, with owner-only permissions from the start: mode 0600 on Unix, and on Windows a protected access list that grants only the current user.
+3. With `--force`, it writes a private temp file in the same directory and renames it over the destination. It never follows an existing symlink or reparse point: the rename replaces the link itself.
 4. On a collision without `--force`, the decrypted message stays in memory while the CLI asks on the terminal: overwrite, save to another directory, or quit. Quitting discards it, and the prompt says so. Without a terminal to ask on, it fails with exit code 7 and discards the message.
 5. On a partial write or a full disk, it removes the files it created and reports the error. Files already replaced under `--force` stay replaced.
 
 ### Profiles
 
-A TOML file in the platform config directory holds only non-secret settings: server URL, default TTL, default output directory.
+A TOML file in the platform config directory holds only non-secret settings: server URL, default TTL, default output directory. Every profile in the file is validated whenever it is loaded, so an invalid one can't be used, shown, or written back; errors give the line or the profile name, never the file's contents. `profile remove` still works on an invalid profile.
 
 - Command-line options override the profile, which overrides defaults.
 - Server URLs with credentials, a query string, or a fragment are rejected.
@@ -513,7 +513,7 @@ A TOML file in the platform config directory holds only non-secret settings: ser
 
 ### Editor mode
 
-The CLI uses a unique owner-only temp file and deletes it on success and on error. The docs say that editor swap and backup files, and crashes, can leave plaintext behind.
+The CLI creates a fresh private directory (owner-only; on Windows, its access list is inherited by what the editor creates there) holding an empty file, runs the editor on that file, reads it back by name (so editors that save by writing a new file and renaming it over the old one work), and removes the whole directory on success and on error, swap and backup files included. `$VISUAL` and `$EDITOR` are split into words at whitespace, with single or double quotes grouping a path that contains spaces; no shell is involved. The docs say that a crash can still leave plaintext behind.
 
 ## Deployment
 

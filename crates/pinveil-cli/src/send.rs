@@ -35,13 +35,14 @@ pub fn run(args: &SendArgs) -> Result<(), CliError> {
             "--edit can't be combined with redirected stdin: send the text through one or the other",
         ));
     }
-    // A generated PIN is shown on the terminal, so make sure there is one before any work.
+    // Both PIN modes need the terminal: a generated PIN is shown there, a chosen one is
+    // typed there. Check before reading any content or contacting the server.
+    let what = "for the PIN (it is shown there, or typed there with --choose-pin)";
+    term::require(what)?;
     let mut console = if args.choose_pin {
         None
     } else {
-        Some(term::console(
-            "to show the generated PIN (or use --choose-pin)",
-        )?)
+        Some(term::console(what)?)
     };
     let picked = args
         .files

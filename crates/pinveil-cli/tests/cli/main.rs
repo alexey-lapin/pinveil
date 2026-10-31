@@ -232,9 +232,23 @@ fn cli_no_terminal_fails_clearly_before_upload() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("needs a terminal"));
     assert!(out.stdout.is_empty());
+    // --choose-pin needs the terminal too, and both modes fail before contacting the server.
+    let out = run_detached(
+        &scratch,
+        &[
+            "send",
+            "--server",
+            &server.url,
+            "--insecure-http",
+            "--choose-pin",
+        ],
+        b"text",
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--choose-pin"));
     assert!(
-        !contains(&server.sent(), b"POST /api/messages"),
-        "nothing was uploaded"
+        server.sent().is_empty(),
+        "no request at all, not even the config"
     );
 
     let out = run_detached(&scratch, &["get", "--insecure-http"], b"");
@@ -424,8 +438,8 @@ fn cli_editor_temp_file_is_removed_on_success_and_on_error() {
     let server = Server::start();
     let scratch = Scratch::new();
     let side = scratch.path("editor-saw.txt");
-    for (fails, expected_exit) in [(false, 0), (true, 2)] {
-        let editor = editor_script(&scratch, &side, fails);
+    for (mode, expected_exit) in [("in-place", 0), ("replace", 0), ("fail", 2)] {
+        let editor = editor_script(&scratch, &side, mode);
         let command = ["send", "--server", &server.url, "--insecure-http", "--edit"];
         let tty = Tty::spawn_with_env(
             &scratch,
@@ -434,47 +448,59 @@ fn cli_editor_temp_file_is_removed_on_success_and_on_error() {
             &[("EDITOR", &editor), ("VISUAL", "")],
         );
         let shown = tty.finish();
-        assert_eq!(exit_code(&shown), expected_exit, "{shown}");
+        assert_eq!(exit_code(&shown), expected_exit, "{mode}: {shown}");
         let temp = fs::read_to_string(&side).unwrap();
-        let temp = temp.trim();
-        assert!(!temp.is_empty(), "the editor ran");
+        let temp = std::path::Path::new(temp.trim());
         assert!(
-            !std::path::Path::new(temp).exists(),
-            "temp file {temp} left behind"
+            temp.ends_with("message.txt"),
+            "the editor ran: {}",
+            temp.display()
         );
-        if !fails {
-            assert!(contains(&server.sent(), b"POST /api/messages"));
-        }
+        assert!(
+            !temp.parent().unwrap().exists(),
+            "{mode}: the private editor directory was left behind"
+        );
     }
+    let sent = server.sent();
+    assert_eq!(
+        sent.windows(b"POST /api/messages".len())
+            .filter(|w| *w == b"POST /api/messages")
+            .count(),
+        2,
+        "both successful edits were sent"
+    );
 }
 
-/// An editor command that records the file it was given, then writes text into it or fails.
+/// An editor (at a path with a space, quoted in `$EDITOR`) that records the file it was
+/// given, then writes text in place, saves by replacement, or fails.
 #[cfg(unix)]
-fn editor_script(scratch: &Scratch, side: &std::path::Path, fails: bool) -> String {
-    let body = if fails {
-        format!("echo \"$1\" > '{}'\nexit 1\n", side.display())
-    } else {
-        format!(
-            "echo \"$1\" > '{}'\nprintf 'edited-text' > \"$1\"\n",
-            side.display()
-        )
+fn editor_script(scratch: &Scratch, side: &std::path::Path, mode: &str) -> String {
+    let record = format!("echo \"$1\" > '{}'\n", side.display());
+    let body = match mode {
+        "in-place" => format!("{record}printf 'edited in place' > \"$1\"\n"),
+        "replace" => {
+            format!("{record}printf 'saved by rename' > \"$1.new\" && mv \"$1.new\" \"$1\"\n")
+        }
+        _ => format!("{record}exit 1\n"),
     };
-    let script = scratch.write(if fails { "fail.sh" } else { "ok.sh" }, body.as_bytes());
-    format!("sh {}", script.display())
+    let script = scratch.write(&format!("my editor {mode}.sh"), body.as_bytes());
+    format!("sh '{}'", script.display())
 }
 
 #[cfg(windows)]
-fn editor_script(scratch: &Scratch, side: &std::path::Path, fails: bool) -> String {
-    let body = if fails {
-        format!("@echo %~1> \"{}\"\r\n@exit /b 1\r\n", side.display())
-    } else {
-        format!(
-            "@echo %~1> \"{}\"\r\n@echo edited-text> \"%~1\"\r\n",
-            side.display()
-        )
+fn editor_script(scratch: &Scratch, side: &std::path::Path, mode: &str) -> String {
+    let record = format!("@echo %~1> \"{}\"\r\n", side.display());
+    let body = match mode {
+        "in-place" => format!("{record}@echo edited in place> \"%~1\"\r\n"),
+        "replace" => format!(
+            "{record}@echo saved by rename> \"%~1.new\"\r\n@move /Y \"%~1.new\" \"%~1\" > NUL\r\n"
+        ),
+        _ => format!("{record}@exit /b 1\r\n"),
     };
-    let script = scratch.write(if fails { "fail.cmd" } else { "ok.cmd" }, body.as_bytes());
-    format!("cmd /C {}", script.display())
+    let script = scratch.write(&format!("my editor {mode}.cmd"), body.as_bytes());
+    // Rust runs a .cmd through cmd.exe with correct quoting; a manual `cmd /C "..."` would
+    // break on the spaced path.
+    format!("\"{}\"", script.display())
 }
 
 #[test]

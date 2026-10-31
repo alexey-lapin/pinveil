@@ -24,6 +24,7 @@ pub fn neutralize(text: &str) -> String {
             }
             '\u{7f}' => out.push_str("^?"),
             '\u{80}'..='\u{9f}'
+            | '\u{61c}'
             | '\u{200e}'
             | '\u{200f}'
             | '\u{202a}'..='\u{202e}'
@@ -54,6 +55,17 @@ mod tests {
         assert_eq!(neutralize("\u{7f}\u{0}"), "^?^@");
         assert_eq!(neutralize("csi\u{9b}2J"), "csi<U+009B>2J");
         assert_eq!(neutralize("abc\u{202e}fed"), "abc<U+202E>fed");
+        // Every Bidi_Control character (Unicode PropList.txt).
+        for c in ['\u{61c}', '\u{200e}', '\u{200f}']
+            .into_iter()
+            .chain('\u{202a}'..='\u{202e}')
+            .chain('\u{2066}'..='\u{2069}')
+        {
+            assert_eq!(
+                neutralize(&c.to_string()),
+                format!("<U+{:04X}>", u32::from(c))
+            );
+        }
         assert_eq!(neutralize("ünïcødé 🗝"), "ünïcødé 🗝");
     }
 }
