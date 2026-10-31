@@ -29,10 +29,13 @@ sha256_check() { # runs `sha256sum -c` in the current directory
   if command -v sha256sum >/dev/null; then sha256sum -c --quiet "$@"; else shasum -a 256 -c --quiet "$@"; fi
 }
 
-# The newest published stable version (no drafts, no prereleases), or nothing.
-newest_stable() {
-  gh release list --exclude-drafts --exclude-pre-releases --limit 200 --json tagName \
-    --jq '.[].tagName' | sed 's/^v//' | sort -V | tail -n 1
+# Every published stable version (no drafts, no prereleases), oldest first. Fails if the
+# list can't be read: an unreadable list must never look like an empty one.
+stable_versions() {
+  local tags
+  tags=$(gh release list --exclude-drafts --exclude-pre-releases --limit 200 --json tagName \
+    --jq '.[].tagName') || return 1
+  printf '%s\n' "$tags" | sed '/^$/d; s/^v//' | sort -V
 }
 
 # Whether <version> is at least <other> (empty <other> counts as older).
@@ -43,8 +46,14 @@ at_least() {
 stage_release() {
   local tag=$1 prerelease=$2 dist=$3
   (cd "$dist" && sha256_check checksums.txt) || die "the tested archives don't match checksums.txt"
-  local draft
-  draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+  local draft err
+  err=$(mktemp)
+  if ! draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>"$err"); then
+    # Only "not found" means there is no release yet; any other error is unknown.
+    grep -qi 'not found' "$err" || die "cannot read release $tag: $(cat "$err")"
+    draft=missing
+  fi
+  rm -f "$err"
   case "$draft" in
     missing)
       local flags=(--draft --verify-tag --generate-notes --title "$tag")
@@ -95,22 +104,37 @@ publish_release() {
   return 1
 }
 
-# The digest an image reference points at, or nothing if it doesn't exist.
+# The digest an image reference points at; nothing if the registry says it doesn't exist.
+# Any other failure (network, auth, a registry error) fails: unknown is not absent.
 image_digest() {
-  docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>/dev/null |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])' 2>/dev/null || true
+  local out err
+  err=$(mktemp)
+  if out=$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>"$err"); then
+    rm -f "$err"
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])' <<<"$out"
+    return
+  fi
+  if grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+    rm -f "$err"
+    return 0
+  fi
+  echo "publish: cannot inspect $1: $(cat "$err")" >&2
+  rm -f "$err"
+  return 1
 }
 
 tag_image() {
   local image=$1 digest=$2 version=$3 prerelease=$4
   local tags=("$version")
   if [ "$prerelease" = false ]; then
-    local newest minor newest_in_minor
-    newest=$(newest_stable)
+    local stable newest minor newest_in_minor
+    if ! stable=$(stable_versions); then
+      note "unknown: can't list published releases, so no image tag was moved"
+      die "cannot list releases"
+    fi
+    newest=$(printf '%s\n' "$stable" | tail -n 1)
     minor=${version%.*}
-    newest_in_minor=$(gh release list --exclude-drafts --exclude-pre-releases --limit 200 \
-      --json tagName --jq '.[].tagName' | sed 's/^v//' | grep -E "^${minor//./\\.}\.[0-9]+$" |
-      sort -V | tail -n 1 || true)
+    newest_in_minor=$(printf '%s\n' "$stable" | grep -E "^${minor//./\\.}\.[0-9]+$" | tail -n 1 || true)
     if at_least "$version" "$newest_in_minor"; then tags+=("$minor")
     else note "skipped: $image:$minor stays on newer $newest_in_minor"; fi
     if at_least "$version" "$newest"; then tags+=(latest)
@@ -118,22 +142,30 @@ tag_image() {
   fi
   # The version tag is immutable: it may be created, or found already at this digest.
   local current
-  current=$(image_digest "$image:$version")
+  if ! current=$(image_digest "$image:$version"); then
+    note "unknown: can't read $image:$version, so no image tag was moved"
+    die "cannot inspect $image:$version"
+  fi
   if [ -n "$current" ] && [ "$current" != "$digest" ]; then
     note "refused: $image:$version already points at $current, not the tested $digest"
     die "$image:$version is taken by another build"
   fi
   local failed=0 tag
   for tag in "${tags[@]}"; do
-    if [ "$(image_digest "$image:$tag")" = "$digest" ]; then
+    if ! current=$(image_digest "$image:$tag"); then
+      note "unknown: can't read $image:$tag; it was not moved"
+      failed=1
+      continue
+    fi
+    if [ "$current" = "$digest" ]; then
       note "unchanged: $image:$tag already at $digest"
     elif docker buildx imagetools create -t "$image:$tag" "$image@$digest" >/dev/null; then
       note "published: $image:$tag at $digest"
     else
-      current=$(image_digest "$image:$tag")
+      current=$(image_digest "$image:$tag") || current=unknown
       if [ "$current" = "$digest" ]; then
         note "published: $image:$tag at $digest (confirmed after an error)"
-      elif [ -n "$current" ]; then
+      elif [ -n "$current" ] && [ "$current" != unknown ]; then
         note "not published: $image:$tag still points at $current"
         failed=1
       else
@@ -147,8 +179,12 @@ tag_image() {
 
 push_manifest() {
   local repo=$1 token=$2 source=$3 destination=$4 tag=$5 version=$6
-  local newest
-  newest=$(newest_stable)
+  local stable newest
+  if ! stable=$(stable_versions); then
+    note "unknown: can't list published releases, so $repo $destination was not changed"
+    die "cannot list releases"
+  fi
+  newest=$(printf '%s\n' "$stable" | tail -n 1)
   if ! at_least "$version" "$newest"; then
     note "skipped: $repo $destination stays on newer $newest"
     return

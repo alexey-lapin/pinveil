@@ -26,7 +26,10 @@ mkdir -p "$state/assets"
 [ -f "$state/state" ] || echo missing >"$state/state"
 case "$1 $2" in
   "release view")
-    s=$(cat "$state/state"); [ "$s" = missing ] && exit 1; echo "$s" ;;
+    if [ -f "$FAKE/view-error" ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+    s=$(cat "$state/state")
+    if [ "$s" = missing ]; then echo "release not found" >&2; exit 1; fi
+    echo "$s" ;;
   "release create")
     shift 3
     while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do cp "$1" "$state/assets/"; shift; done
@@ -44,6 +47,12 @@ case "$1 $2" in
     [ -f "$FAKE/fail-edit" ] && exit 1
     true ;;
   "release list")
+    # list-errors-after N: the first N lists succeed, later ones fail.
+    if [ -f "$FAKE/list-errors-after" ]; then
+      n=$(cat "$FAKE/list-errors-after")
+      [ "$n" -gt 0 ] || { echo "HTTP 502" >&2; exit 1; }
+      echo $((n - 1)) >"$FAKE/list-errors-after"
+    fi
     cat "$FAKE/stable" 2>/dev/null || true ;;
   *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
 esac
@@ -55,7 +64,8 @@ mkdir -p "$FAKE/tags"
 case "$1 $2 $3" in
   "buildx imagetools inspect")
     tag=${4##*:}
-    [ -f "$FAKE/tags/$tag" ] || exit 1
+    if [ -f "$FAKE/inspect-error" ]; then echo "ERROR: dial tcp: connection refused" >&2; exit 1; fi
+    [ -f "$FAKE/tags/$tag" ] || { echo "ERROR: $4: not found" >&2; exit 1; }
     printf '{"digest":"%s"}\n' "$(cat "$FAKE/tags/$tag")" ;;
   "buildx imagetools create")
     tag=${5##*:}
@@ -114,6 +124,14 @@ summary_has "refused: release v1.2.0 is already published with different archive
 cmp -s "$FAKE/release/assets/pinveil_1.2.0_linux_amd64.tar.gz" "$dist/pinveil_1.2.0_linux_amd64.tar.gz" ||
   fail "the published asset was overwritten"
 ok "stage-release refuses to replace a published release with a rebuild"
+
+reset stage-view-error
+mkdir -p "$FAKE/release"
+echo false >"$FAKE/release/state"
+touch "$FAKE/view-error"
+if "$publish" stage-release v1.2.0 false "$dist" 2>/dev/null; then fail "staged without reading the release"; fi
+if [ -n "$(ls "$FAKE/release/assets" 2>/dev/null)" ]; then fail "assets were uploaded without reading the release"; fi
+ok "stage-release treats an unreadable release as unknown, never as missing"
 
 # --- publish-release ---------------------------------------------------------------------
 reset publish
@@ -176,6 +194,23 @@ summary_has "refused: ghcr.io/x/pinveil:1.2.0 already points at sha256:other"
 [ ! -f "$FAKE/tags/latest" ] || fail "latest moved after a refusal"
 ok "tag-image never moves an existing version tag"
 
+reset image-inspect-error
+mkdir -p "$FAKE/tags"
+echo sha256:other >"$FAKE/tags/1.2.0"
+touch "$FAKE/inspect-error"
+if "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false 2>/dev/null; then fail "tagged without reading the version tag"; fi
+summary_has "unknown: can't read ghcr.io/x/pinveil:1.2.0, so no image tag was moved"
+[ "$(cat "$FAKE/tags/1.2.0")" = sha256:other ] || fail "an unreadable version tag was overwritten"
+ok "tag-image treats an unreadable tag as unknown, never as absent"
+
+reset image-list-error
+printf 'v1.2.0\nv1.2.5\nv1.3.0\n' >"$FAKE/stable"
+echo 0 >"$FAKE/list-errors-after"
+if "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false 2>/dev/null; then fail "tagged without the release list"; fi
+summary_has "unknown: can't list published releases, so no image tag was moved"
+if [ -d "$FAKE/tags" ] && [ -n "$(ls "$FAKE/tags")" ]; then fail "a tag moved without the release list"; fi
+ok "tag-image moves nothing when the release list can't be read"
+
 reset image-older
 printf 'v1.2.0\nv1.3.0\n' >"$FAKE/stable"
 "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false
@@ -222,5 +257,13 @@ echo "formula old" >"$work/old.rb"
 summary_has "skipped: homebrew-tap Formula/pinveil.rb stays on newer 1.3.0"
 [ "$(read_remote)" = "formula v2" ] || fail "an old retry downgraded the formula"
 ok "push-manifest never moves a channel backwards"
+
+echo 0 >"$FAKE/list-errors-after"
+if "$publish" push-manifest homebrew-tap token "$work/old.rb" Formula/pinveil.rb v1.2.0 1.2.0 2>/dev/null; then
+  fail "pushed without the release list"
+fi
+summary_has "unknown: can't list published releases, so homebrew-tap Formula/pinveil.rb was not changed"
+[ "$(read_remote)" = "formula v2" ] || fail "a manifest changed without the release list"
+ok "push-manifest changes nothing when the release list can't be read"
 
 echo "all $passed checks passed"
