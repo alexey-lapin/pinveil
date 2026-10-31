@@ -277,7 +277,7 @@ impl Service {
                 expires_at,
                 protocol_version: PROTOCOL_VERSION,
             };
-            match self.store.insert(message, now) {
+            match self.stored(move |store| store.insert(message, now)).await? {
                 Ok(()) => {
                     return Ok(Created {
                         id,
@@ -318,9 +318,10 @@ impl Service {
 
     async fn retrieve_now(&self, id: &str, pin: String) -> Result<Vec<u8>, ApiError> {
         let _serialized = self.stripes.lock(id).await;
+        let owned = id.to_owned();
         let meta = self
-            .store
-            .meta(id)
+            .stored(move |store| store.meta(&owned))
+            .await?
             .map_err(storage_unavailable)?
             .ok_or(ApiError::Unavailable)?;
         // Every action below is bound to this row's generation: if the row expires, is
@@ -328,8 +329,9 @@ impl Service {
         // never consumed or charged by this request.
         let generation = meta.generation;
         if meta.is_expired_at(self.clock.now()) {
-            self.store
-                .remove(id, generation)
+            let owned = id.to_owned();
+            self.stored(move |store| store.remove(&owned, generation))
+                .await?
                 .map_err(storage_unavailable)?;
             return Err(ApiError::Unavailable);
         }
@@ -339,24 +341,49 @@ impl Service {
             .run(move || verifier.verify(&pin, &meta.pin_salt, &meta.pin_verifier))
             .await?;
         if !matches {
+            let owned = id.to_owned();
+            let max = self.policy.max_failed_attempts;
             return match self
-                .store
-                .record_failure(id, generation, self.policy.max_failed_attempts)
+                .stored(move |store| store.record_failure(&owned, generation, max))
+                .await?
                 .map_err(storage_unavailable)?
             {
                 Some(_) => Err(ApiError::WrongPin),
                 None => Err(ApiError::Unavailable),
             };
         }
-        self.store
-            .consume(id, generation)
+        let owned = id.to_owned();
+        self.stored(move |store| store.consume(&owned, generation))
+            .await?
             .map_err(storage_unavailable)?
             .ok_or(ApiError::Unavailable)
     }
 
-    /// Removes expired messages; the background sweeper calls this every minute.
-    pub fn sweep(&self) -> Result<usize, StoreError> {
-        self.store.sweep(self.clock.now())
+    /// Runs one store call on the blocking pool: `SQLite` does file I/O and fsyncs there.
+    /// The call is its own task, so it runs to its commit or rollback even if the request
+    /// that started it is cancelled. Admission (uploads and retrievals) bounds how many
+    /// can be in flight.
+    async fn stored<T: Send + 'static>(
+        &self,
+        call: impl FnOnce(&dyn Store) -> T + Send + 'static,
+    ) -> Result<T, ApiError> {
+        let store = Arc::clone(&self.store);
+        tokio::task::spawn_blocking(move || call(store.as_ref()))
+            .await
+            .map_err(|_| ApiError::Internal)
+    }
+
+    /// Removes expired messages and does store housekeeping; the background sweeper calls
+    /// this at startup and every minute.
+    pub async fn sweep(&self) -> Result<usize, StoreError> {
+        let now = self.clock.now();
+        self.stored(move |store| {
+            let removed = store.sweep(now)?;
+            store.maintain()?;
+            Ok(removed)
+        })
+        .await
+        .map_err(|_| StoreError)?
     }
 
     #[cfg(test)]
@@ -741,10 +768,68 @@ mod tests {
         }
         .build();
         create(&service).await;
-        assert_eq!(service.sweep(), Ok(0));
+        assert_eq!(service.sweep().await, Ok(0));
         clock.advance(600);
-        assert_eq!(service.sweep(), Ok(1));
+        assert_eq!(service.sweep().await, Ok(1));
         assert_eq!(store.usage(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn sql_faults_service_answers_503_and_never_sends_bytes() {
+        use crate::sqlite::SqliteStore;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            SqliteStore::open(&dir.path().join("store.db"), "pepper", 10, 100_000).unwrap(),
+        );
+        let (service, _) = Setup {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            ..Setup::default()
+        }
+        .build();
+        let unavailable = ApiError::ServiceUnavailable("Storage is unavailable");
+
+        // Fails before the commit: nothing changed, the message can still be opened.
+        let id = create(&service).await;
+        store.fail_at("consume.before_commit");
+        assert_eq!(
+            service.retrieve(id.clone(), PIN.into()).await.unwrap_err(),
+            unavailable
+        );
+        // A wrong attempt whose commit fails is not reported as a plain wrong PIN.
+        store.fail_at("attempt.before_commit");
+        assert_eq!(
+            service
+                .retrieve(id.clone(), "000000".into())
+                .await
+                .unwrap_err(),
+            unavailable
+        );
+        assert_eq!(store.meta(&id).unwrap().unwrap().failed_attempts, 0);
+        assert!(service.retrieve(id, PIN.into()).await.is_ok());
+
+        // Fails after the commit, before the response: no bytes, and the message is gone.
+        let id = create(&service).await;
+        store.fail_at("consume.after_commit");
+        assert_eq!(
+            service.retrieve(id.clone(), PIN.into()).await.unwrap_err(),
+            unavailable
+        );
+        assert_eq!(
+            service.retrieve(id, PIN.into()).await.unwrap_err(),
+            ApiError::Unavailable,
+            "at most once, even though nothing was delivered"
+        );
+
+        // A create whose commit fails is refused, and nothing is left behind.
+        store.fail_at("insert.before_commit");
+        assert_eq!(
+            service
+                .create(vec![1; 10], PIN.into(), "600")
+                .await
+                .unwrap_err(),
+            unavailable
+        );
+        assert_eq!(store.usage().unwrap(), (0, 0));
     }
 
     #[tokio::test]
@@ -946,7 +1031,7 @@ mod tests {
         .await;
         clock.advance(600);
         if !reclaim_by_cap {
-            assert_eq!(service.sweep(), Ok(1));
+            assert_eq!(service.sweep().await, Ok(1));
         }
         service
             .create(b"NEW".to_vec(), "222222".into(), "600")

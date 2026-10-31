@@ -16,7 +16,18 @@ pub struct Server {
     pub base_url: String,
     pub client: Client,
     stderr: Arc<Mutex<String>>,
-    _child: Child,
+    // Declared before the store directory, so the process goes before its files.
+    child: Child,
+    _store_dir: Option<tempfile::TempDir>,
+}
+
+/// The store mode the suite runs against: `PINVEIL_CONTRACT_STORE=sqlite` registers the
+/// `SQLite` store for every test that doesn't pick a mode itself. Default `memory`.
+pub fn store_mode() -> &'static str {
+    match std::env::var("PINVEIL_CONTRACT_STORE").as_deref() {
+        Ok("sqlite") => "sqlite",
+        _ => "memory",
+    }
 }
 
 /// Settings every test server gets unless overridden: a pepper (so no warning noise) and
@@ -32,12 +43,23 @@ impl Server {
         Self::start_with(&[]).await
     }
 
-    /// Starts with `BASE_ENV` plus `env` (later entries win).
+    /// Starts with `BASE_ENV` plus `env` (later entries win). In `sqlite` suite mode, a
+    /// test that sets no store mode gets a fresh `SQLite` store in a temp directory.
     pub async fn start_with(env: &[(&str, &str)]) -> Self {
+        let picks_mode = env.iter().any(|(k, _)| *k == "PINVEIL_STORE__MODE");
+        let store_dir = (store_mode() == "sqlite" && !picks_mode)
+            .then(|| tempfile::tempdir().expect("store directory"));
+        let store_path = store_dir
+            .as_ref()
+            .map(|dir| dir.path().join("store.db").display().to_string());
         let mut command = Command::new(BIN);
         command.args(["--listen", "127.0.0.1:0"]);
         for (key, value) in BASE_ENV.iter().chain(env) {
             command.env(key, value);
+        }
+        if let Some(path) = &store_path {
+            command.env("PINVEIL_STORE__MODE", "sqlite");
+            command.env("PINVEIL_STORE__PATH", path);
         }
         let mut child = command
             .stdout(Stdio::piped())
@@ -76,8 +98,14 @@ impl Server {
             base_url: format!("http://{addr}"),
             client: Client::new(),
             stderr,
-            _child: child,
+            child,
+            _store_dir: store_dir,
         }
+    }
+
+    /// Kills the server and waits until it is gone, so its store lock is released.
+    pub async fn stop(mut self) {
+        let _ = self.child.kill().await;
     }
 
     pub fn url(&self, path: &str) -> String {

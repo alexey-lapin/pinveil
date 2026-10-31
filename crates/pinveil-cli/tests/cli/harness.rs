@@ -112,7 +112,10 @@ fn start_upstream(env: &[(&str, &str)]) -> std::net::SocketAddr {
             .unwrap();
         runtime.block_on(async move {
             let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-            pinveil_server::serve(listener, config).await.unwrap();
+            let store = pinveil_server::open_store(&config).unwrap();
+            pinveil_server::serve(listener, config, store)
+                .await
+                .unwrap();
         });
     });
     addr

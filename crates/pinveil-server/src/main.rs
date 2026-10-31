@@ -25,6 +25,13 @@ async fn main() -> ExitCode {
     for warning in warnings {
         eprintln!("pinveil-server: warning: {}", warning.0);
     }
+    let store = match pinveil_server::open_store(&config) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("pinveil-server: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let listener = match tokio::net::TcpListener::bind(config.listen).await {
         Ok(listener) => listener,
         Err(error) => {
@@ -43,7 +50,7 @@ async fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     }
-    if let Err(error) = pinveil_server::serve(listener, config).await {
+    if let Err(error) = pinveil_server::serve(listener, config, store).await {
         eprintln!("pinveil-server: {error}");
         return ExitCode::from(1);
     }

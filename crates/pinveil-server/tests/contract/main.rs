@@ -6,4 +6,5 @@ mod harness;
 mod logs;
 mod messages;
 mod ratelimit;
+mod store;
 mod web;

@@ -479,13 +479,8 @@ fn build_store(v: &Values<'_>, messages: &MessagesConfig) -> Result<StoreConfig,
         max_messages: v.parse("store.max_messages")?,
         max_bytes: v.parse("store.max_bytes")?,
     };
-    if store.mode == StoreMode::Sqlite {
-        if store.path.is_none() {
-            return Err(error("store.path is required when store.mode = sqlite"));
-        }
-        return Err(error(
-            "store.mode = sqlite is not available in this build yet",
-        ));
+    if store.mode == StoreMode::Sqlite && store.path.is_none() {
+        return Err(error("store.path is required when store.mode = sqlite"));
     }
     if store.max_messages == 0 || store.max_bytes < messages.max_payload_bytes {
         return Err(error(

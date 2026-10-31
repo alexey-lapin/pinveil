@@ -49,6 +49,12 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      # The same contract suite with the SQLite store registered for every test.
+      - name: Contract suite on SQLite
+        env:
+          PINVEIL_CONTRACT_STORE: sqlite
+        run: cargo test --locked -p pinveil-server --test contract
+
   # The Linux release binaries are musl builds; build and run the whole suite against them.
   test-musl:
     strategy:
@@ -77,6 +83,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked --target ${{ matrix.target }}
+
+      - name: Contract suite on SQLite
+        env:
+          PINVEIL_CONTRACT_STORE: sqlite
+        run: cargo test --locked -p pinveil-server --test contract --target ${{ matrix.target }}
 
   js:
     runs-on: ubuntu-latest

@@ -351,7 +351,10 @@ Rules for `sqlite` mode:
 
 - The database lives on a local persistent volume, not a network share.
 - Disk-full and busy errors map to 503.
-- The database has a schema version.
+- The database has a schema version, and its tables and columns are checked at startup. A database with another version, unexpected tables, or unexpected columns is refused.
+- A second server on the same database is refused through an exclusive OS lock on a `<path>.lock` file next to it, held while the server runs.
+- WAL and `synchronous=FULL` are set and read back at startup. `journal_size_limit` (64 MiB) and a `wal_checkpoint(TRUNCATE)` with every sweep keep the WAL bounded. The first sweep runs at startup.
+- Store calls run on the blocking pool, one short transaction each, never while hashing. Each runs to its commit or rollback even if the request that started it is cancelled.
 - The server stores a fingerprint of the pepper. If the configured pepper doesn't match it at startup, the server refuses to start, because a changed pepper would turn every correct PIN into a wrong attempt and burn the stored messages. The operator has to wipe the store explicitly to change the pepper.
 - A later release that changes the envelope format has two options. It can ship clients (browser UI and CLI) that still decode every protocol generation still live in the store, so those messages stay readable until they expire. Otherwise the store must be drained before the upgrade. The server stays opaque either way.
 - Restoring a database backup can bring old messages back. That is outside the at-most-once guarantee, and normal startup never does it.

@@ -89,6 +89,10 @@ pub trait Store: Send + Sync + 'static {
     fn remove(&self, id: &str, generation: u64) -> Result<bool, StoreError>;
     /// Removes every message expired at `now`; returns how many.
     fn sweep(&self, now: SystemTime) -> Result<usize, StoreError>;
+    /// Periodic housekeeping, run with the sweep, such as bounding a write-ahead log.
+    fn maintain(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 struct Entry {

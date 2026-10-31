@@ -47,7 +47,7 @@ async fn http_pages_and_config_match_and_are_allowlisted() {
     let mut keys: Vec<_> = from_api.as_object().unwrap().keys().cloned().collect();
     keys.sort();
     assert_eq!(keys, CLIENT_CONFIG_KEYS, "HTTP-config allowlist");
-    assert_eq!(from_api["storeMode"], "memory");
+    assert_eq!(from_api["storeMode"], crate::harness::store_mode());
     assert_eq!(from_api["maxPayloadBytes"], 26_214_400);
     assert_eq!(from_api["ttlPresets"][0]["label"], "15 minutes");
     assert!(!text.contains("pepper-sentinel-7f3a") && !html.contains("pepper-sentinel-7f3a"));
