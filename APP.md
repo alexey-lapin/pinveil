@@ -366,7 +366,8 @@ Multiple server instances remain out of scope in both modes.
 
 Settings come from, highest precedence first: command-line options, environment variables, the TOML file, then defaults. The TOML file comes from `--config`, or else from `PINVEIL_CONFIG`.
 
-- An environment variable is `PINVEIL_` followed by the key in upper case, with `.` written as `__`. For example, `pin.pepper` becomes `PINVEIL_PIN__PEPPER`.
+- An environment variable is `PINVEIL_` followed by the key in upper case, with `.` written as `__`. For example, `pin.pepper` becomes `PINVEIL_PIN__PEPPER`. Only names containing `__` are settings, so other `PINVEIL_` variables such as `PINVEIL_CONFIG` are never mistaken for one.
+- An unknown key, from any source, is an error.
 - Lists are comma-separated in environment variables, e.g. `PINVEIL_MESSAGES__TTL_PRESETS=15m,30m,1h`.
 - Giving a single-value option twice on the command line is an error.
 
@@ -374,6 +375,7 @@ Settings come from, highest precedence first: command-line options, environment 
 |---|---|---|
 | `server.listen` | `0.0.0.0:8080` | Listen address |
 | `server.trusted_proxies` | empty | Peer addresses or CIDRs whose forwarding headers are trusted |
+| `server.max_concurrent_uploads` | `16` | Create requests whose bodies may be in flight at once. Beyond this, the server returns 503. |
 | `messages.min_ttl` | `1m` | Shortest TTL the server accepts |
 | `messages.max_ttl` | `24h` | Longest TTL the server accepts |
 | `messages.default_ttl` | `15m` | Preset the UI selects first |
