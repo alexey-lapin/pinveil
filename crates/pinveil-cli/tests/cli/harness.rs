@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use expectrl::process::{Healthcheck, NonBlocking};
 use expectrl::session::OsSession;
-use expectrl::{Expect, Regex, Session};
+use expectrl::{Expect, Session};
 
 pub const CLI: &str = env!("CARGO_BIN_EXE_pinveil");
 pub const DEADLINE: Duration = Duration::from_mins(1);
@@ -197,20 +197,6 @@ impl Tty {
         }
     }
 
-    /// Waits for `pattern` and returns its first capture group.
-    pub fn capture(&mut self, pattern: &str) -> String {
-        match self.session.expect(Regex(pattern)) {
-            Ok(found) => {
-                self.shown.extend_from_slice(found.before());
-                String::from_utf8_lossy(found.get(1).expect("one capture group")).into_owned()
-            }
-            Err(error) => panic!(
-                "{pattern:?} not shown ({error}); terminal so far: {}",
-                self.shown()
-            ),
-        }
-    }
-
     pub fn send_line(&mut self, line: &str) {
         self.session.send_line(line).unwrap();
     }
@@ -284,16 +270,19 @@ fn shell(args: &[&str], io: &Io<'_>) -> Command {
     for arg in args {
         let _ = write!(line, r#" "{arg}""#);
     }
-    if let Some(path) = io.stdin {
-        let _ = write!(line, r#" < "{}""#, path.display());
-    }
-    if let Some(path) = io.stdout {
-        let _ = write!(line, r#" > "{}""#, path.display());
-    }
-    if let Some(path) = io.stderr {
-        let _ = write!(line, r#" 2> "{}""#, path.display());
-    }
-    line.push_str(" & echo [exit !ERRORLEVEL!]");
+    // Under conpty the shell can inherit the test process's redirected handles instead of
+    // the pseudo-console, so every stream not sent to a file goes to CON explicitly.
+    let target = |path: Option<&Path>| {
+        path.map_or_else(|| "CON".to_owned(), |p| format!(r#""{}""#, p.display()))
+    };
+    let _ = write!(
+        line,
+        " < {} > {} 2> {}",
+        target(io.stdin),
+        target(io.stdout),
+        target(io.stderr)
+    );
+    line.push_str(" & echo [exit !ERRORLEVEL!] > CON");
     let mut command = Command::new("cmd.exe");
     command
         .arg("/V:ON")
@@ -313,7 +302,8 @@ pub fn run_detached(scratch: &Scratch, args: &[&str], stdin: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(stdin).unwrap();
+    // The CLI may exit before reading stdin (a usage error); a broken pipe is fine then.
+    let _ = child.stdin.take().unwrap().write_all(stdin);
     child.wait_with_output().unwrap()
 }
 
@@ -373,7 +363,7 @@ pub fn send(
     args.extend(file_args.iter().map(String::as_str));
     let empty = scratch.write(&format!("empty-{}.txt", rand_suffix()), b"");
     let errors = scratch.path(&format!("stderr-{}.txt", rand_suffix()));
-    let mut tty = Tty::spawn(
+    let tty = Tty::spawn(
         scratch,
         &args,
         &Io {
@@ -382,8 +372,8 @@ pub fn send(
             stderr: Some(&errors),
         },
     );
-    let pin = tty.capture(r"PIN: (\d{6})");
     let shown = tty.finish();
+    let pin = pin_shown(&shown);
     let errors = std::fs::read_to_string(&errors).unwrap();
     assert_eq!(exit_code(&shown), 0, "send failed: {shown}{errors}");
     let link = std::fs::read_to_string(&link_file)
@@ -425,4 +415,53 @@ pub fn fake_server(response: &'static str) -> (String, Arc<Mutex<Vec<u8>>>) {
         }
     });
     (url, recorded)
+}
+
+/// The generated PIN the terminal showed. Terminal escape sequences are removed first:
+/// Windows conpty re-renders output and can put cursor sequences between the words.
+pub fn pin_shown(shown: &str) -> String {
+    let plain = strip_escapes(shown);
+    let at = plain
+        .find("PIN: ")
+        .unwrap_or_else(|| panic!("no PIN shown: {plain:?}"));
+    let digits: String = plain[at + 5..]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .take(6)
+        .collect();
+    assert!(
+        digits.len() == 6 && digits.bytes().all(|b| b.is_ascii_digit()),
+        "no PIN shown: {plain:?}"
+    );
+    digits
+}
+
+/// Removes CSI (`ESC [ ... final`) and OSC (`ESC ] ... BEL` or `ESC \\`) sequences.
+pub fn strip_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }

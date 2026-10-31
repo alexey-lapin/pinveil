@@ -293,7 +293,7 @@ fn cli_profiles_supply_the_server_and_never_store_secrets() {
 
     let input = scratch.write("in.txt", b"profile-text-sentinel");
     let link_file = scratch.path("link.txt");
-    let mut tty = Tty::spawn(
+    let tty = Tty::spawn(
         &scratch,
         &["send", "--insecure-http"],
         &Io {
@@ -302,8 +302,8 @@ fn cli_profiles_supply_the_server_and_never_store_secrets() {
             ..Io::default()
         },
     );
-    let pin = tty.capture(r"PIN: (\d{6})");
     let shown = tty.finish();
+    let pin = harness::pin_shown(&shown);
     assert_eq!(exit_code(&shown), 0, "{shown}");
     let link = fs::read_to_string(&link_file).unwrap();
     assert!(
