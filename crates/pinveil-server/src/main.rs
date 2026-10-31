@@ -2,7 +2,6 @@
 
 use std::process::ExitCode;
 
-use axum::{Router, routing::get};
 use pinveil_server::config::{self, Sources};
 
 #[tokio::main]
@@ -35,11 +34,7 @@ async fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     }
-    let app = Router::new().route(
-        "/",
-        get(|| async { "pinveil-server (phase 2 in progress)" }),
-    );
-    if let Err(error) = axum::serve(listener, app).await {
+    if let Err(error) = pinveil_server::serve(listener, config).await {
         eprintln!("pinveil-server: {error}");
         return ExitCode::from(1);
     }

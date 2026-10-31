@@ -1,5 +1,3 @@
-@param String clientConfigJson
-@param long defaultTtlSeconds
 <!doctype html>
 <html lang="en">
 <head>
@@ -9,7 +7,7 @@
     <link rel="stylesheet" href="/static/app.css">
 </head>
 <body data-page="create">
-<script id="app-config" type="application/json">$unsafe{clientConfigJson}</script>
+<script id="app-config" type="application/json">{{client_config_json}}</script>
 <main class="shell shell-create">
     <section class="create-stage">
         <form id="create-form" class="card form-card create-panel">

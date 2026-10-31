@@ -5,7 +5,9 @@ use std::collections::HashSet;
 /// Number of entries in the EFF large wordlist.
 pub const WORDLIST_LEN: usize = 7776;
 
-const EMBEDDED: &str = include_str!("../../../assets/eff_large_wordlist.txt");
+/// The raw embedded wordlist file, exactly as served to browsers. Validate with
+/// [`Wordlist::embedded`] before use.
+pub const EMBEDDED_TEXT: &str = include_str!("../../../assets/eff_large_wordlist.txt");
 
 /// A validated wordlist: exactly [`WORDLIST_LEN`] distinct, well-formed words.
 #[derive(Debug, Clone)]
@@ -71,7 +73,7 @@ impl Wordlist<'static> {
     /// The wordlist embedded in this binary, validated. Callers should validate once at
     /// startup and keep the result.
     pub fn embedded() -> Result<Self, WordlistError> {
-        Self::parse(EMBEDDED)
+        Self::parse(EMBEDDED_TEXT)
     }
 }
 
@@ -89,7 +91,7 @@ fn is_word(word: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{EMBEDDED, WORDLIST_LEN, Wordlist, WordlistError};
+    use super::{EMBEDDED_TEXT as EMBEDDED, WORDLIST_LEN, Wordlist, WordlistError};
 
     fn replace_line(line: usize, with: &str) -> String {
         EMBEDDED

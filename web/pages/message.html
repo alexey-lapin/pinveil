@@ -1,5 +1,3 @@
-@param String messageId
-@param String clientConfigJson
 <!doctype html>
 <html lang="en">
 <head>
@@ -8,8 +6,8 @@
     <title>Pinveil - Open secure message</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
-<body data-page="retrieve" data-message-id="${messageId}">
-<script id="app-config" type="application/json">$unsafe{clientConfigJson}</script>
+<body data-page="retrieve" data-message-id="{{message_id}}">
+<script id="app-config" type="application/json">{{client_config_json}}</script>
 <main class="shell shell-retrieve">
     <section class="card retrieve-card">
         <p class="eyebrow">Message</p>

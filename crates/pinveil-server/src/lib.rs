@@ -2,7 +2,34 @@
 //! The binary in `main.rs` only loads configuration and runs [`serve`]; everything else lives
 //! here so tests can drive the real router in-process.
 
+pub mod api;
+pub mod app;
+pub mod assets;
 pub mod config;
+pub mod error;
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use pinveil_core::wordlist::Wordlist;
+
+use crate::app::{AppState, router};
+use crate::config::Config;
+
+/// Validates startup invariants, then serves on `listener` until shutdown.
+pub async fn serve(listener: tokio::net::TcpListener, config: Config) -> std::io::Result<()> {
+    // Invariant 12: never serve or use a wordlist that fails validation.
+    Wordlist::embedded().map_err(|e| std::io::Error::other(format!("embedded wordlist: {e}")))?;
+    let app = router(Arc::new(AppState::new(config)));
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+}
 
 #[cfg(test)]
 mod tests {
