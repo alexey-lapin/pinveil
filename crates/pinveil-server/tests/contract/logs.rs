@@ -43,7 +43,11 @@ async fn srv_logs_never_contain_pins_headers_or_bodies() {
             .await
             .unwrap();
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Poll until all three request lines have been read from the server's stderr.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while server.stderr().matches("request").count() < 3 && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let logs = server.stderr();
     assert!(
         logs.matches("request").count() >= 3,

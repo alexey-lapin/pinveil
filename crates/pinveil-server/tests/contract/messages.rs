@@ -369,15 +369,35 @@ async fn srv_caps_store_full_is_503() {
 async fn srv_admission_pending_uploads_are_bounded() {
     let server = Server::start_with(&[("PINVEIL_SERVER__MAX_CONCURRENT_UPLOADS", "1")]).await;
     let addr = server.base_url.trim_start_matches("http://").to_owned();
-    // Hold the only upload slot with a request whose body never finishes.
-    let mut slow = tokio::net::TcpStream::connect(&addr).await.unwrap();
     let head = format!(
         "POST /api/messages HTTP/1.1\r\nHost: {addr}\r\nContent-Type: multipart/form-data; boundary=B\r\nContent-Length: 100000\r\n\r\n--B\r\n"
     );
-    slow.write_all(head.as_bytes()).await.unwrap();
-    // Poll rather than sleep: once the slow request holds the slot, creates get 503.
+    // Hold the only upload slot with a request whose body never finishes. A poll can reach
+    // the slot first, in which case the slow request is answered 503 and must start over.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut slow: Option<tokio::net::TcpStream> = None;
     loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the slow upload never held the slot"
+        );
+        if slow.is_none() {
+            let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+            stream.write_all(head.as_bytes()).await.unwrap();
+            slow = Some(stream);
+        }
+        let stream = slow.as_mut().expect("just connected");
+        let mut buf = [0u8; 64];
+        if let Ok(read) =
+            tokio::time::timeout(Duration::from_millis(20), stream.read(&mut buf)).await
+        {
+            assert!(
+                read.is_err() || read.unwrap() == 0 || buf.starts_with(b"HTTP/1.1 503"),
+                "unexpected answer to the slow upload"
+            );
+            slow = None; // it lost the race and was answered; try again
+            continue;
+        }
         let response = post(&server, form(b"x", PIN, "600")).await;
         if response.status() == 503 {
             assert_eq!(
@@ -386,11 +406,6 @@ async fn srv_admission_pending_uploads_are_bounded() {
             );
             break;
         }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "the slow upload never held the slot"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     drop(slow);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
