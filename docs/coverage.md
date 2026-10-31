@@ -32,42 +32,43 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 |---|---|---|---|---|
 | INV-1 | Plaintext, names, and MIME types never leave a client unencrypted. The passphrase never reaches the server. The PIN does, over TLS, and only its verifier is stored. The only TLS exception is `--insecure-http` to loopback. | P1.5, P2.4, P3.4, P4.3, P4.9 | `INV-1.browser-request-capture`, `INV-1.cli-request-capture`, `INV-1.no-raw-pin-stored`, `INV-1.insecure-http-loopback-only` | planned |
 | INV-2 | The fragment is never sent, logged, or put in errors | P3.4, P4.1, P4.3, P4.9 | `INV-2.browser-requests`, `INV-2.cli-requests`, `INV-2.cli-error-redaction`, `INV-2.parser-diagnostics-redacted` | planned |
-| INV-3 | The server treats blobs as opaque bytes | P2.5 | `INV-3.arbitrary-bytes-roundtrip`, `INV-3.no-format-inspection` | planned |
+| INV-3 | The server treats blobs as opaque bytes | P2.5 | contract `inv_3_arbitrary_bytes_roundtrip` (5000 non-envelope bytes stored and returned byte for byte) | local (macOS; CI pending) |
 | INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | core `inv_4_round_trip_needs_both_inputs`; JS `INV-4 round trip ...`; vectors `decrypt: wrong PIN`, `decrypt: wrong passphrase` | covered (CI run 41165815026 at c0d0b65) |
-| INV-5 | The PIN is stored only as a salted, peppered Argon2id hash | P2.4, P5.1 | `INV-5.verifier-composition`, `INV-5.salt-16-bytes`, `INV-5.params-applied`, `INV-5.sqlite-row-has-no-pin` | planned |
-| INV-6 | At-most-once: the consume commits before the response, and a failed commit sends no blob | P2.6, P5.4 | `INV-6.parallel-same-id`, `INV-6.commit-failure-no-bytes`, `INV-6.sqlite-restart-no-resurrection` | planned |
-| INV-7 | Wrong attempts and the burn commit before the response | P2.6, P5.4 | `INV-7.burn-sequence`, `INV-7.concurrent-attempts`, `INV-7.sqlite-attempts-survive-restart` | planned |
-| INV-8 | Expiry is logical, and sweeps remove later | P2.3, P5.2 | `INV-8.boundary-controlled-clock`, `INV-8.sweeper`, `INV-8.cap-reclaim`, `INV-8.sqlite-startup-sweep` | planned |
-| INV-9 | One identical 404 for every gone state | P2.6 | `INV-9.unknown-expired-burned-consumed-equal` | planned |
-| INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | planned |
-| INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | planned |
+| INV-5 | The PIN is stored only as a salted, peppered Argon2id hash | P2.4, P5.1 | `pin.rs` `inv_5_verifier_composition_and_params`, `inv_5_params_applied_and_old_hashes_still_verify`; `INV-5.sqlite-row-has-no-pin` (P5.1) | P2.4 parts local (macOS; CI pending); P5.1 planned |
+| INV-6 | At-most-once: the consume commits before the response, and a failed commit sends no blob | P2.6, P5.4 | service `inv_6_consume_once_*`, `inv_6_parallel_same_id_releases_once`, `inv_6_commit_failure_no_bytes`; store `inv_6_consume_is_at_most_once`; contract `inv_6_parallel_same_id`; `INV-6.sqlite-restart-no-resurrection` (P5.4) | P2.6 parts local (macOS; CI pending); P5.4 planned |
+| INV-7 | Wrong attempts and the burn commit before the response | P2.6, P5.4 | store `inv_7_failures_count_then_burn_and_never_recreate`; service `inv_7_burn_sequence_then_gone`; contract `http_retrieve_pin_rules_and_burn_sequence`; `INV-7.sqlite-attempts-survive-restart` (P5.4) | P2.6 parts local (macOS; CI pending); P5.4 planned |
+| INV-8 | Expiry is logical, and sweeps remove later | P2.3, P5.2 | service `inv_8_boundary_controlled_clock`, `inv_8_sweeper_removes_expired`; store `inv_8_sweep_removes_only_expired_at_the_boundary`, `srv_caps_count_bytes_and_reclaim_expired`; contract `inv_9_*` (expired case); `INV-8.sqlite-startup-sweep` (P5.2) | P2.3 parts local (macOS; CI pending); P5.2 planned |
+| INV-9 | One identical 404 for every gone state | P2.6 | contract `inv_9_unknown_expired_burned_consumed_equal` | local (macOS; CI pending) |
+| INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | P2.2 part (`storeMode` in config, contract `http_pages_and_config_match_and_are_allowlisted`) local; P3, P4, P5 planned |
+| INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | P2.2 part (CSP header, contract `inv_11_pages_load_only_same_origin_assets`) local; P3.4 request capture planned |
 | INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | P1.1 parts covered (CI run 41165815026 at c0d0b65); P3.4 (real page) planned |
-| INV-13 | One JSON error shape on every rejection | P2.2, P2.5, P2.6 | `INV-13.unknown-route`, `INV-13.wrong-method`, `INV-13.media-type`, `INV-13.missing-header`, `INV-13.missing-part`, `INV-13.duplicate-part`, `INV-13.malformed-multipart`, `INV-13.oversize`, `INV-13.static-errors` | planned |
+| INV-13 | One JSON error shape on every rejection | P2.2, P2.5, P2.6 | contract `inv_13_framework_errors_use_the_json_shape` (unknown route, wrong method), `http_create_every_rejection` (missing, duplicate, unexpected part, malformed multipart, 415), `http_limits_*` (oversize, chunked), `http_retrieve_pin_rules_and_burn_sequence` (missing header), `http_static_assets_and_wordlist` (static 404); `harness::assert_error` checks shape and headers on each | local (macOS; CI pending) |
 | INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | core `inv_14_*` (envelope, payload, crypto); JS `INV-14.*`; core `inv_14_header_negatives_derive_no_keys` and the JS vector test count key derivations: 0 for every header refusal, 1 otherwise | covered (CI run 41165815026 at c0d0b65) |
 
 ## HTTP interface
 
-| Id | Rule | Owner | Status |
-|---|---|---|---|
-| HTTP-pages | `/` and `/message/{id}` render with the escaped client config, and the same way whether or not the id exists | P2.2 | planned |
-| HTTP-config | `/api/config` returns exactly the allowlisted fields, with headers, and isn't rate limited | P2.2 | planned |
-| HTTP-create | The 201, 400, 413, 429, and 503 cases, exactly at the limit and one byte over, chunked oversize, empty blob gets 400 | P2.5 | planned |
-| HTTP-retrieve | Check order, a missing or malformed PIN doesn't count an attempt, 403 then burn then 404, 503 on storage error | P2.6 | planned |
-| HTTP-headers | Security headers on every response, errors included | P2.2 | planned |
-| HTTP-limits | Body limit = blob limit + bounded multipart overhead | P2.5 | planned |
+| Id | Rule | Owner | Tests | Status |
+|---|---|---|---|---|
+| HTTP-pages | `/` and `/message/{id}` render with the escaped client config, and the same way whether or not the id exists | P2.2 | contract `http_pages_and_config_match_and_are_allowlisted`, `http_pages_render_for_any_id_with_the_id_escaped`; `assets::tests::escaping` | local (macOS; CI pending) |
+| HTTP-config | `/api/config` returns exactly the allowlisted fields, with headers, and isn't rate limited | P2.2 | contract `http_pages_and_config_match_and_are_allowlisted` (exact keys, no pepper) | local (macOS; CI pending) |
+| HTTP-create | The 201, 400, 413, 415, 429, and 503 cases, exactly at the limit and one byte over, chunked oversize, empty blob gets 400 | P2.5 | service `http_create_validation`; contract `http_create_and_retrieve_round_trip`, `http_create_every_rejection`, `http_limits_*`, `srv_caps_store_full_is_503`, `srv_ratelimit_create_bucket_then_429` | local (macOS; CI pending) |
+| HTTP-retrieve | Check order, a missing or malformed PIN doesn't count an attempt, 403 then burn then 404, 503 on storage error | P2.6 | contract `http_retrieve_pin_rules_and_burn_sequence`, `acc_403_live_id`; service `inv_6_commit_failure_no_bytes` | local (macOS; CI pending) |
+| HTTP-headers | Security headers on every response, errors included | P2.2 | `harness::assert_security_headers` on pages, static, config, 201, 200, and every error | local (macOS; CI pending) |
+| HTTP-limits | Body limit = blob limit + bounded multipart overhead | P2.5 | contract `http_limits_exact_blob_boundary_and_oversize_bodies`, `http_limits_chunked_oversize_body` | local (macOS; CI pending) |
+| HTTP-static | Embedded static files with correct types; every `web/static` file is embedded; the served wordlist is the validated one | P2.2 | `assets::tests::every_web_static_file_is_embedded`; contract `http_static_assets_and_wordlist` | local (macOS; CI pending) |
 
 ## Server
 
-| Id | Rule | Owner | Status |
-|---|---|---|---|
-| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | P1.2 parts covered (CI run 41165815026 at c0d0b65); P2.3 (collision limit) planned |
-| SRV-caps | Atomic count and byte caps under concurrent creates | P2.3, P5.3 | planned |
-| SRV-serialize | Same id serialized, different ids concurrent (barrier verifier) | P2.6 | planned |
-| SRV-hash-pool | Permit limit, queue limit (503), memory budget, 13-hash default | P2.1, P2.7 | planned |
-| SRV-admission | In-flight bodies and pending uploads are bounded. A cancelled request never reports success before its commit. | P2.7 | planned |
-| SRV-ratelimit | Fixed windows, key cap, peer address by default, trusted proxies walked right to left, spoofed left-most entry, malformed header falls back | P2.8 | planned |
-| SRV-logs | No PIN, header value, or body content in logs | P2.9 | planned |
-| SRV-failpoints | The fault interface exists only with `test-failpoints`. Release binaries lack it. | P2.6, P6.3 | planned |
+| Id | Rule | Owner | Tests | Status |
+|---|---|---|---|---|
+| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | core `srv_ids_message_id_format`; service `srv_ids_collision_limit`; contract `http_create_and_retrieve_round_trip` (format) | local (macOS; CI pending) |
+| SRV-caps | Atomic count and byte caps, sweep before refusing | P2.3, P5.3 | store `srv_caps_count_bytes_and_reclaim_expired`; contract `srv_caps_store_full_is_503`; SQLite (P5.3) | P2.3 parts local (macOS; CI pending); P5.3 planned |
+| SRV-serialize | Same id serialized, different ids concurrent | P2.6 | service `srv_serialize_different_ids_verify_concurrently` (rendezvous verifier; one lock stripe makes it fail), `inv_6_parallel_same_id_releases_once` | local (macOS; CI pending) |
+| SRV-hash-pool | Permit limit, queue limit (503), memory budget, 13-hash default | P2.1, P2.7 | config `cfg_hash_concurrency_formula`; service `srv_hash_pool_queue_full_is_503` (gate verifier) | local (macOS; CI pending) |
+| SRV-admission | In-flight bodies and pending uploads are bounded. A cancelled request never reports success before its commit. | P2.7 | contract `srv_admission_pending_uploads_are_bounded`; service `srv_admission_cancelled_request_still_commits_its_attempt` (no spawned retrieval makes it fail) | local (macOS; CI pending) |
+| SRV-ratelimit | Fixed windows, key cap, peer address by default, trusted proxies walked right to left, spoofed left-most entry, malformed header falls back | P2.8 | `ratelimit` unit tests; contract `srv_ratelimit_*` (removing the trusted-peer check reproduces the Java bypass and fails) | local (macOS; CI pending) |
+| SRV-logs | No PIN, header value, query string, or body content in logs | P2.9 | contract `srv_logs_never_contain_pins_headers_or_bodies` (logging headers makes it fail) | local (macOS; CI pending) |
+| SRV-failpoints | The fault interface exists only with `test-failpoints`. Release binaries lack it. | P5, P6.3 | Phase 2 used in-process seams (`FaultyStore`, gate and rendezvous verifiers) instead; the feature arrives with SQLite fault injection | planned |
 
 ## SQLite store
 
@@ -83,11 +84,11 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 ## Configuration
 
-| Id | Rule | Owner | Status |
-|---|---|---|---|
-| CFG-precedence | Flags > env > TOML > defaults. `--config` before `PINVEIL_CONFIG`. Comma-separated lists. A repeated single-value option is an error. | P2.1 | planned |
-| CFG-validate | TTLs, impossible limits, KDF range, store path, ZIP32 bounds, hash budget below one hash: startup refused | P2.1 | planned |
-| CFG-pepper-warn | An empty pepper logs a warning | P2.1 | planned |
+| Id | Rule | Owner | Tests | Status |
+|---|---|---|---|---|
+| CFG-precedence | Flags > env > TOML > defaults. `--config` before `PINVEIL_CONFIG`. Comma-separated lists. A repeated single-value option or unknown key is an error. | P2.1 | config `cfg_precedence_*` | local (macOS; CI pending) |
+| CFG-validate | TTLs, impossible limits, KDF range, store path, ZIP32 bounds, hash budget below one hash: startup refused | P2.1 | config `cfg_validate_refuses_impossible_settings`, `cfg_defaults_match_app_md`; contract `cfg_validate_refuses_to_start_and_warns` | local (macOS; CI pending) |
+| CFG-pepper-warn | An empty pepper logs a warning; the pepper never appears in Debug output | P2.1 | config `cfg_defaults_match_app_md`, `pepper_never_appears_in_debug_output`; contract `cfg_validate_refuses_to_start_and_warns` | local (macOS; CI pending) |
 
 ## Crypto and format
 
