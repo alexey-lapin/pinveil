@@ -1,4 +1,7 @@
-import { encodeEnvelope, encryptPayload, generatePassphrase } from "./crypto.js";
+import { sealPayload } from "./crypto.js";
+import { blobLength } from "./envelope.js";
+import { CEILING_LIMITS, encodePayload } from "./payload.js";
+import { generatePassphrase } from "./random.js";
 import { config, validatePin, maxPayloadMegabytes, MAX_CUSTOM_TTL_MINUTES } from "./config.js";
 import { setFeedback, parseJson } from "./ui.js";
 import { loadWordList } from "./wordlist.js";
@@ -43,11 +46,11 @@ export function initCreatePage() {
             const passphrase = generatePassphrase(words);
             const payload = await buildPayload(payloadType);
 
-            if (payload.byteLength > config.maxPayloadBytes) {
+            if (blobLength(payload.length, config.pbkdf2Iterations) > config.maxPayloadBytes) {
                 throw new Error(`Payload exceeds the ${maxPayloadMegabytes()} MB limit before encryption.`);
             }
 
-            const blob = await encryptPayload(payload, passphrase, pin, config.pbkdf2Iterations);
+            const blob = await sealPayload(payload, passphrase, pin, config.pbkdf2Iterations);
             const formData = new FormData();
             formData.append("blob", new Blob([blob]), "blob.bin");
             formData.append("pin", pin);
@@ -179,7 +182,7 @@ async function buildPayload(payloadType) {
         if (!text) {
             throw new Error("Enter some text before generating a link.");
         }
-        return encodeEnvelope({ type: "text" }, new TextEncoder().encode(text));
+        return encodePayload({ text }, creationLimits());
     }
 
     const file = document.getElementById("messageFile").files[0];
@@ -191,12 +194,16 @@ async function buildPayload(payloadType) {
     }
 
     const fileBytes = new Uint8Array(await file.arrayBuffer());
-    return encodeEnvelope(
-        {
-            type: "file",
-            name: file.name,
-            mimeType: file.type || "application/octet-stream"
-        },
-        fileBytes
+    return encodePayload(
+        { files: [{ name: file.name, mimeType: file.type || "application/octet-stream", data: fileBytes }] },
+        creationLimits()
     );
+}
+
+// Phase 3 takes these from the client config; until then, the protocol ceilings apply.
+function creationLimits() {
+    return {
+        maxFiles: config.maxFiles ?? CEILING_LIMITS.maxFiles,
+        maxManifestBytes: config.maxManifestBytes ?? CEILING_LIMITS.maxManifestBytes
+    };
 }

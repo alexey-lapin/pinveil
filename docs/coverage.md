@@ -19,7 +19,7 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 | Id | What it proves | Test | Status |
 |---|---|---|---|
 | H-contract | The registered contract suite starts the real `pinveil-server` binary and reaches it | `crates/pinveil-server/tests/contract/main.rs` `harness_reaches_the_real_server_binary` | covered (CI run 41162610508 at 0ff07c4) |
-| H-js | The JS runner loads `web/static` modules under Node Web Crypto | `tests/js/harness.test.js` | covered (CI run 41162610508 at 0ff07c4) |
+| H-js | The JS runner loads `web/static` modules under Node Web Crypto | `tests/js/crypto.test.js` "INV-4 round trip ..." (replaced `harness.test.js` in Phase 1) | local (macOS; CI pending) |
 | H-pty | A hidden prompt works in a PTY while stdin and stdout are redirected, without echoing the input | `crates/pty-probe/tests/terminal.rs` `hidden_prompt_works_with_stdin_from_a_file`, `hidden_prompt_works_with_stdin_from_a_pipe` | covered (CI run 41162610508 at 0ff07c4) |
 | H-noterm | Without a terminal, the prompt fails clearly (exit 3) | `crates/pty-probe/tests/terminal.rs` `fails_clearly_without_a_terminal` | covered (CI run 41162610508 at 0ff07c4) |
 | H-deps | Bundled SQLite and reqwest with rustls (aws-lc-rs) build and link | `pinveil-server` `bundled_sqlite_links`, `pinveil-cli` `rustls_client_builds` | covered (CI run 41162610508 at 0ff07c4) |

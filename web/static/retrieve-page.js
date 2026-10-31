@@ -1,4 +1,4 @@
-import { decryptPayload } from "./crypto.js";
+import { openPayload } from "./crypto.js";
 import { validatePin } from "./config.js";
 import { setFeedback, parseJson, formatBytes } from "./ui.js";
 
@@ -40,8 +40,7 @@ export function initRetrievePage() {
             }
 
             const blobBytes = new Uint8Array(await response.arrayBuffer());
-            const decryptedEnvelope = await decryptPayload(blobBytes, passphrase, pin);
-            renderDecryptedEnvelope(decryptedEnvelope);
+            renderPayload(await openPayload(blobBytes, passphrase, pin));
             retrieveForm.classList.add("hidden");
             outputCard.classList.remove("hidden");
             setFeedback(status, "Decryption complete.", "success");
@@ -53,15 +52,16 @@ export function initRetrievePage() {
     });
 }
 
-function renderDecryptedEnvelope(envelope) {
+// Shows the text or the first file. Phase 3 replaces this with the multi-file view.
+function renderPayload(payload) {
     const textOutput = document.getElementById("text-output");
     const fileOutput = document.getElementById("file-output");
 
     textOutput.classList.add("hidden");
     fileOutput.classList.add("hidden");
 
-    if (envelope.metadata.type === "text") {
-        const text = new TextDecoder().decode(envelope.payload);
+    if (payload.text !== null) {
+        const text = payload.text;
         document.getElementById("message-output").textContent = text;
         document.getElementById("copy-message-button").onclick = async () => {
             await navigator.clipboard.writeText(text);
@@ -70,13 +70,14 @@ function renderDecryptedEnvelope(envelope) {
         return;
     }
 
-    const fileBlob = new Blob([envelope.payload], { type: envelope.metadata.mimeType || "application/octet-stream" });
-    document.getElementById("file-output-name").textContent = `${envelope.metadata.name} (${formatBytes(fileBlob.size)})`;
+    const [file] = payload.files;
+    const fileBlob = new Blob([file.data], { type: file.mimeType });
+    document.getElementById("file-output-name").textContent = `${file.name} (${formatBytes(fileBlob.size)})`;
     document.getElementById("download-file-button").onclick = () => {
         const url = URL.createObjectURL(fileBlob);
         const anchor = document.createElement("a");
         anchor.href = url;
-        anchor.download = envelope.metadata.name || "download.bin";
+        anchor.download = file.name;
         anchor.click();
         URL.revokeObjectURL(url);
     };
