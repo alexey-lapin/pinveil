@@ -38,4 +38,6 @@ else
   tar -C "$name" -czf "$name.tar.gz" .
 fi
 rm -rf "$stage"
-echo "$root/dist/$name.$ext"
+# Relative to the repository root: Git Bash on Windows prints /d/... absolute paths that
+# other tools (upload-artifact) can't resolve.
+echo "dist/$name.$ext"
