@@ -185,8 +185,8 @@ impl Tty {
         }
     }
 
-    /// Waits for `text` on the terminal. Matches without trailing blanks, which Windows
-    /// `ConPTY` does not send.
+    /// Waits for `text` on the terminal. Use text without spaces: Windows `ConPTY` can render
+    /// a space as a cursor move, and it never sends trailing blanks.
     pub fn expect(&mut self, text: &str) {
         match self.session.expect(text) {
             Ok(found) => self.shown.extend_from_slice(found.before()),
@@ -333,14 +333,26 @@ fn detached(mut command: Command) -> Command {
 
 /// The `[exit N]` marker the shell wrapper prints.
 pub fn exit_code(shown: &str) -> i32 {
-    let at = shown.rfind("[exit ").expect("exit marker shown");
-    shown[at + 6..]
-        .split(']')
-        .next()
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap()
+    let plain = squash(shown);
+    let at = plain
+        .rfind("[exit")
+        .unwrap_or_else(|| panic!("no exit marker shown: {plain:?}"));
+    plain[at + 5..].split(']').next().unwrap().parse().unwrap()
+}
+
+/// Terminal text with escape sequences and all whitespace removed. Windows conpty re-renders
+/// the screen and can replace spaces with cursor moves, so terminal assertions compare
+/// squashed text on both sides.
+pub fn squash(text: &str) -> String {
+    strip_escapes(text)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// Whether the terminal showed `text`, ignoring escapes and whitespace.
+pub fn shows(shown: &str, text: &str) -> bool {
+    squash(shown).contains(&squash(text))
 }
 
 /// Whether `haystack` contains `needle`.
@@ -420,15 +432,11 @@ pub fn fake_server(response: &'static str) -> (String, Arc<Mutex<Vec<u8>>>) {
 /// The generated PIN the terminal showed. Terminal escape sequences are removed first:
 /// Windows conpty re-renders output and can put cursor sequences between the words.
 pub fn pin_shown(shown: &str) -> String {
-    let plain = strip_escapes(shown);
+    let plain = squash(shown);
     let at = plain
-        .find("PIN: ")
+        .find("PIN:")
         .unwrap_or_else(|| panic!("no PIN shown: {plain:?}"));
-    let digits: String = plain[at + 5..]
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .take(6)
-        .collect();
+    let digits: String = plain[at + 4..].chars().take(6).collect();
     assert!(
         digits.len() == 6 && digits.bytes().all(|b| b.is_ascii_digit()),
         "no PIN shown: {plain:?}"

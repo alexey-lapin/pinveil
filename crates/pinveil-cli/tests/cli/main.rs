@@ -4,7 +4,9 @@ mod harness;
 
 use std::fs;
 
-use harness::{Io, Scratch, Server, Tty, contains, exit_code, fake_server, run_detached, send};
+use harness::{
+    Io, Scratch, Server, Tty, contains, exit_code, fake_server, run_detached, send, shows,
+};
 
 /// Text with a CRLF, an escape sequence, a tab, and non-ASCII: it must come back byte-exact
 /// through redirected stdout.
@@ -73,7 +75,7 @@ fn cli_roundtrip_text_and_files_with_byte_exact_stdout() {
         !shown.contains(link.split('#').nth(1).unwrap()),
         "the link prompt is hidden"
     );
-    assert!(shown.contains("memory only"), "store notice: {shown}");
+    assert!(shows(&shown, "memory only"), "store notice: {shown}");
 }
 
 #[test]
@@ -83,7 +85,8 @@ fn cli_output_terminal_neutralizes_control_sequences_unless_raw() {
     let (link, pin) = send(&server, &scratch, Some(TRICKY_TEXT), &[]);
     let shown = get(&scratch, &link, &pin, &[], None);
     assert_eq!(exit_code(&shown), 0, "{shown}");
-    assert!(shown.contains("ansi ^[[31mred^[[0m"), "{shown}");
+    assert!(shows(&shown, "ansi ^[[31mred^[[0m"), "{shown}");
+    #[cfg(unix)]
     assert!(
         !shown.contains("\u{1b}[31m"),
         "raw escape reached the terminal"
@@ -91,6 +94,9 @@ fn cli_output_terminal_neutralizes_control_sequences_unless_raw() {
 
     let (link, pin) = send(&server, &scratch, Some(TRICKY_TEXT), &[]);
     let shown = get(&scratch, &link, &pin, &["--raw"], None);
+    assert!(!shows(&shown, "^[[31m"), "--raw doesn't neutralize");
+    // conpty re-renders colors on Windows, so the raw bytes are checked on Unix only.
+    #[cfg(unix)]
     assert!(shown.contains("\u{1b}[31m"), "--raw passes escapes through");
 }
 
@@ -182,7 +188,7 @@ fn cli_exit_codes_per_failure_class() {
     let wrong = format!("{}#wrong-words-in-here", link.split('#').next().unwrap());
     let shown = get(&scratch, &wrong, &pin, &[], None);
     assert_eq!(exit_code(&shown), 6, "{shown}");
-    assert!(shown.contains("already deleted"));
+    assert!(shows(&shown, "already deleted"));
     let shown = get(&scratch, &link, &pin, &[], None);
     assert_eq!(exit_code(&shown), 5, "{shown}");
 }
@@ -206,12 +212,12 @@ fn cli_get_wrong_pin_asks_again() {
     tty.send_line(&link);
     tty.expect("PIN:");
     tty.send_line(wrong);
-    tty.expect("Wrong PIN");
+    tty.expect("Wrong");
     tty.expect("PIN:");
     tty.send_line(&pin);
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 0, "{shown}");
-    assert!(shown.contains("retry"));
+    assert!(shows(&shown, "retry"));
 }
 
 #[test]
@@ -365,7 +371,7 @@ fn cli_send_refuses_an_oversized_message_before_upload() {
     );
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 2, "{shown}");
-    assert!(shown.contains("once encrypted"), "{shown}");
+    assert!(shows(&shown, "once encrypted"), "{shown}");
     assert!(!contains(&server.sent(), b"POST /api/messages"));
 }
 
@@ -390,10 +396,10 @@ fn cli_send_choose_pin_and_get_with_the_positional_link() {
             ..Io::default()
         },
     );
-    tty.expect("PIN (6 digits):");
+    tty.expect("digits):");
     tty.send_line("12345");
-    tty.expect("six digits");
-    tty.expect("PIN (6 digits):");
+    tty.expect("six");
+    tty.expect("digits):");
     tty.send_line("424242");
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 0, "{shown}");
@@ -410,7 +416,7 @@ fn cli_send_choose_pin_and_get_with_the_positional_link() {
     tty.send_line("424242");
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 0, "{shown}");
-    assert!(shown.contains("chosen"));
+    assert!(shows(&shown, "chosen"));
 }
 
 #[test]
@@ -487,7 +493,7 @@ fn cli_http_redirects_are_refused() {
     );
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 3, "{shown}");
-    assert!(shown.contains("redirect"), "{shown}");
+    assert!(shows(&shown, "redirect"), "{shown}");
     assert!(!contains(&recorded.lock().unwrap(), b"POST"));
 }
 
@@ -508,7 +514,7 @@ fn cli_http_invalid_config_stops_before_upload() {
     );
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 3, "{shown}");
-    assert!(shown.contains("compatible pinveil server"), "{shown}");
+    assert!(shows(&shown, "compatible pinveil server"), "{shown}");
     let seen = recorded.lock().unwrap();
     assert!(contains(&seen, b"GET /api/config") && !contains(&seen, b"POST"));
 }
