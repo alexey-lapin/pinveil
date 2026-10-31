@@ -20,7 +20,7 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 |---|---|---|---|
 | H-contract | The registered contract suite starts the real `pinveil-server` binary and reaches it | `crates/pinveil-server/tests/contract/main.rs` `harness_reaches_the_real_server_binary` | local (macOS; CI pending) |
 | H-js | The JS runner loads `web/static` modules under Node Web Crypto | `tests/js/harness.test.js` | local (macOS; CI pending) |
-| H-pty | A hidden prompt works in a PTY while stdin and stdout are redirected, without echoing the input | `crates/pty-probe/tests/terminal.rs` `hidden_prompt_works_with_redirected_stdin_and_stdout` | local (macOS; CI pending) |
+| H-pty | A hidden prompt works in a PTY while stdin and stdout are redirected, without echoing the input | `crates/pty-probe/tests/terminal.rs` `hidden_prompt_works_with_stdin_from_a_file`, `hidden_prompt_works_with_stdin_from_a_pipe` | local (macOS; CI pending) |
 | H-noterm | Without a terminal, the prompt fails clearly (exit 3) | `crates/pty-probe/tests/terminal.rs` `fails_clearly_without_a_terminal` | local (macOS; CI pending) |
 | H-deps | Bundled SQLite and reqwest with rustls (aws-lc-rs) build and link | `pinveil-server` `bundled_sqlite_links`, `pinveil-cli` `rustls_client_builds` | local (macOS; CI pending) |
 
