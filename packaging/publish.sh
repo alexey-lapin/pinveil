@@ -50,7 +50,7 @@ stage_release() {
   err=$(mktemp)
   if ! draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>"$err"); then
     # Only "not found" means there is no release yet; any other error is unknown.
-    grep -qi 'not found' "$err" || die "cannot read release $tag: $(cat "$err")"
+    grep -qxF 'release not found' "$err" || die "cannot read release $tag: $(cat "$err")"
     draft=missing
   fi
   rm -f "$err"
@@ -114,7 +114,10 @@ image_digest() {
     python3 -c 'import json,sys; print(json.load(sys.stdin)["digest"])' <<<"$out"
     return
   fi
-  if grep -qiE 'not found|manifest unknown|name unknown' "$err"; then
+  # Exactly buildx's missing-manifest line for this reference, or the registry's
+  # MANIFEST_UNKNOWN code. Other errors can mention "not found" too (a missing credential
+  # helper, an HTTP error page), and those must stay unknown.
+  if grep -qxF "ERROR: $1: not found" "$err" || grep -qF 'MANIFEST_UNKNOWN' "$err"; then
     rm -f "$err"
     return 0
   fi

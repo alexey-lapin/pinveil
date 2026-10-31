@@ -26,7 +26,7 @@ mkdir -p "$state/assets"
 [ -f "$state/state" ] || echo missing >"$state/state"
 case "$1 $2" in
   "release view")
-    if [ -f "$FAKE/view-error" ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+    if [ -f "$FAKE/view-error" ]; then cat "$FAKE/view-error" >&2; exit 1; fi
     s=$(cat "$state/state")
     if [ "$s" = missing ]; then echo "release not found" >&2; exit 1; fi
     echo "$s" ;;
@@ -64,7 +64,7 @@ mkdir -p "$FAKE/tags"
 case "$1 $2 $3" in
   "buildx imagetools inspect")
     tag=${4##*:}
-    if [ -f "$FAKE/inspect-error" ]; then echo "ERROR: dial tcp: connection refused" >&2; exit 1; fi
+    if [ -f "$FAKE/inspect-error" ]; then cat "$FAKE/inspect-error" >&2; exit 1; fi
     [ -f "$FAKE/tags/$tag" ] || { echo "ERROR: $4: not found" >&2; exit 1; }
     printf '{"digest":"%s"}\n' "$(cat "$FAKE/tags/$tag")" ;;
   "buildx imagetools create")
@@ -128,10 +128,12 @@ ok "stage-release refuses to replace a published release with a rebuild"
 reset stage-view-error
 mkdir -p "$FAKE/release"
 echo false >"$FAKE/release/state"
-touch "$FAKE/view-error"
-if "$publish" stage-release v1.2.0 false "$dist" 2>/dev/null; then fail "staged without reading the release"; fi
-if [ -n "$(ls "$FAKE/release/assets" 2>/dev/null)" ]; then fail "assets were uploaded without reading the release"; fi
-ok "stage-release treats an unreadable release as unknown, never as missing"
+for error in "HTTP 502: Bad Gateway" "HTTP 500: route not found" "error: credential helper not found"; do
+  echo "$error" >"$FAKE/view-error"
+  if "$publish" stage-release v1.2.0 false "$dist" 2>/dev/null; then fail "staged after '$error'"; fi
+  if [ -n "$(ls "$FAKE/release/assets" 2>/dev/null)" ]; then fail "assets were uploaded after '$error'"; fi
+done
+ok "stage-release treats any error but 'release not found' as unknown"
 
 # --- publish-release ---------------------------------------------------------------------
 reset publish
@@ -197,11 +199,23 @@ ok "tag-image never moves an existing version tag"
 reset image-inspect-error
 mkdir -p "$FAKE/tags"
 echo sha256:other >"$FAKE/tags/1.2.0"
-touch "$FAKE/inspect-error"
-if "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false 2>/dev/null; then fail "tagged without reading the version tag"; fi
-summary_has "unknown: can't read ghcr.io/x/pinveil:1.2.0, so no image tag was moved"
-[ "$(cat "$FAKE/tags/1.2.0")" = sha256:other ] || fail "an unreadable version tag was overwritten"
-ok "tag-image treats an unreadable tag as unknown, never as absent"
+for error in "ERROR: dial tcp: connection refused" "ERROR: failed to authorize: credential helper not found" \
+  "ERROR: unexpected status 500: route not found" "ERROR: ghcr.io/x/pinveil:other: not found"; do
+  echo "$error" >"$FAKE/inspect-error"
+  if "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false 2>/dev/null; then fail "tagged after '$error'"; fi
+  summary_has "unknown: can't read ghcr.io/x/pinveil:1.2.0, so no image tag was moved"
+  [ "$(cat "$FAKE/tags/1.2.0")" = sha256:other ] || fail "the version tag was overwritten after '$error'"
+  [ "$(ls "$FAKE/tags")" = 1.2.0 ] || fail "a tag was written after '$error'"
+done
+ok "tag-image treats any error but this reference's not-found as unknown"
+
+reset image-manifest-unknown
+echo "ERROR: unexpected status: 404 Not Found: MANIFEST_UNKNOWN: manifest unknown" >"$FAKE/inspect-error"
+mkdir -p "$FAKE/tags"
+# With every lookup reporting MANIFEST_UNKNOWN, tags count as absent and are created.
+"$publish" tag-image ghcr.io/x/pinveil "$digest" 1.3.0-rc.1 true
+[ "$(cat "$FAKE/tags/1.3.0-rc.1")" = "$digest" ] || fail "a MANIFEST_UNKNOWN tag was not created"
+ok "tag-image treats the registry's MANIFEST_UNKNOWN as absent"
 
 reset image-list-error
 printf 'v1.2.0\nv1.2.5\nv1.3.0\n' >"$FAKE/stable"
