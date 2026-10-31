@@ -178,3 +178,61 @@ fn windows_files_and_dirs_are_owner_only_even_under_a_permissive_parent() {
         assert!(!entries[0].contains("Everyone"), "{entries:?}");
     }
 }
+
+#[cfg(windows)]
+fn junction(link: &std::path::Path, target: &std::path::Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "mklink /J failed");
+}
+
+/// The directory is reached through a junction, and the junction is redirected afterwards:
+/// every operation still lands in the directory that was pinned.
+#[cfg(windows)]
+#[test]
+fn windows_a_redirected_junction_does_not_redirect_operations() {
+    let root = tempfile::tempdir().unwrap();
+    let pinned = root.path().join("pinned");
+    let other = root.path().join("other");
+    fs::create_dir(&pinned).unwrap();
+    fs::create_dir(&other).unwrap();
+    let link = root.path().join("link");
+    junction(&link, &pinned);
+    let dir = Dir::open(&link).unwrap();
+    assert_eq!(dir.path(), link.as_path(), "messages use the path as given");
+
+    fs::remove_dir(&link).unwrap();
+    junction(&link, &other);
+    dir.create_new("a.txt", b"secret").unwrap();
+    dir.replace("b.txt", b"secret").unwrap();
+    dir.create_new("c.txt", b"x").unwrap();
+    dir.remove("c.txt").unwrap();
+    assert_eq!(fs::read(pinned.join("a.txt")).unwrap(), b"secret");
+    assert_eq!(fs::read(pinned.join("b.txt")).unwrap(), b"secret");
+    assert_eq!(
+        fs::read_dir(&other).unwrap().count(),
+        0,
+        "nothing reached the other dir"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_volumes_without_acl_support_are_refused() {
+    use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
+    // FAT reports no FILE_PERSISTENT_ACLS; NTFS and ReFS do.
+    assert_eq!(
+        super::sys::require_acls(0).unwrap_err().kind(),
+        std::io::ErrorKind::Unsupported
+    );
+    assert!(super::sys::require_acls(0x0002_0000).is_err());
+    super::sys::require_acls(FILE_PERSISTENT_ACLS).unwrap();
+    // The CI volume is NTFS, so opening succeeds there.
+    let root = tempfile::tempdir().unwrap();
+    Dir::open(root.path()).unwrap();
+}

@@ -146,7 +146,7 @@ impl Scratch {
 }
 
 /// How an interactive run gets its stdin and where its stdout goes.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Io<'a> {
     pub stdin: Option<&'a Path>,
     pub stdout: Option<&'a Path>,
@@ -157,6 +157,10 @@ pub struct Io<'a> {
 pub struct Tty {
     session: OsSession,
     shown: Vec<u8>,
+    /// Where stderr goes: the test's file, or one the harness picked.
+    stderr: PathBuf,
+    /// Where the shell wrapper writes `[exit N]`.
+    exit: PathBuf,
 }
 
 impl Tty {
@@ -170,7 +174,20 @@ impl Tty {
         io: &Io<'_>,
         env: &[(&str, &str)],
     ) -> Self {
-        let mut command = shell(args, io);
+        // Results are read from files, not from the screen: Windows conpty repaints the
+        // screen and can overwrite or reorder text. Only prompts and the PIN, which exist
+        // only on the terminal, are read from it.
+        let id = rand_suffix();
+        let stderr = io.stderr.map_or_else(
+            || scratch.path(&format!("tty-stderr-{id}.txt")),
+            Path::to_path_buf,
+        );
+        let exit = scratch.path(&format!("tty-exit-{id}.txt"));
+        let io = Io {
+            stderr: Some(&stderr),
+            ..*io
+        };
+        let mut command = shell(args, &io, &exit);
         // conpty (Windows) builds the child's environment only from variables set on the
         // command, so pass the inherited ones explicitly; without SystemRoot, Winsock fails.
         command.envs(std::env::vars_os());
@@ -182,6 +199,8 @@ impl Tty {
         Self {
             session,
             shown: Vec::new(),
+            stderr,
+            exit,
         }
     }
 
@@ -202,10 +221,13 @@ impl Tty {
     }
 
     /// Reads the terminal until the process exits. Returns everything it showed.
+    /// Returns what the terminal showed, then stderr, then the `[exit N]` marker.
     pub fn finish(mut self) -> String {
         let rest = drain_until_exit(&mut self.session);
         self.shown.extend_from_slice(&rest);
-        self.shown()
+        let stderr = std::fs::read_to_string(&self.stderr).unwrap_or_default();
+        let exit = std::fs::read_to_string(&self.exit).unwrap_or_default();
+        format!("{}\n{stderr}\n{}", self.shown(), exit.trim())
     }
 
     fn shown(&self) -> String {
@@ -244,9 +266,9 @@ where
 }
 
 /// `pinveil args...` through the platform shell, with optional redirections, and the exit
-/// code written after it so tests can read it from the terminal.
+/// code written to `exit` after it.
 #[cfg(unix)]
-fn shell(args: &[&str], io: &Io<'_>) -> Command {
+fn shell(args: &[&str], io: &Io<'_>, exit: &Path) -> Command {
     let mut script = String::from(r#""$0" "$@""#);
     if let Some(path) = io.stdin {
         let _ = write!(script, " < '{}'", path.display());
@@ -257,14 +279,14 @@ fn shell(args: &[&str], io: &Io<'_>) -> Command {
     if let Some(path) = io.stderr {
         let _ = write!(script, " 2> '{}'", path.display());
     }
-    script.push_str("; echo \"[exit $?]\"");
+    let _ = write!(script, "; echo \"[exit $?]\" > '{}'", exit.display());
     let mut command = Command::new("sh");
     command.arg("-c").arg(script).arg(CLI).args(args);
     command
 }
 
 #[cfg(windows)]
-fn shell(args: &[&str], io: &Io<'_>) -> Command {
+fn shell(args: &[&str], io: &Io<'_>, exit: &Path) -> Command {
     use std::os::windows::process::CommandExt;
     let mut line = format!(r#""{CLI}""#);
     for arg in args {
@@ -282,7 +304,11 @@ fn shell(args: &[&str], io: &Io<'_>) -> Command {
         target(io.stdout),
         target(io.stderr)
     );
-    line.push_str(" & echo [exit !ERRORLEVEL!] > CON");
+    let _ = write!(
+        line,
+        r#" & echo [exit !ERRORLEVEL!] > "{}""#,
+        exit.display()
+    );
     let mut command = Command::new("cmd.exe");
     command
         .arg("/V:ON")

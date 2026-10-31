@@ -212,11 +212,11 @@ fn cli_get_wrong_pin_asks_again() {
     tty.send_line(&link);
     tty.expect("PIN:");
     tty.send_line(wrong);
-    tty.expect("Wrong");
     tty.expect("PIN:");
     tty.send_line(&pin);
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 0, "{shown}");
+    assert!(shows(&shown, "Wrong PIN"), "{shown}");
     assert!(shows(&shown, "retry"));
 }
 
@@ -412,12 +412,12 @@ fn cli_send_choose_pin_and_get_with_the_positional_link() {
     );
     tty.expect("digits):");
     tty.send_line("12345");
-    tty.expect("six");
     tty.expect("digits):");
     tty.send_line("424242");
     let shown = tty.finish();
     assert_eq!(exit_code(&shown), 0, "{shown}");
     assert!(!shown.contains("424242"), "a chosen PIN is never shown");
+    assert!(shows(&shown, "six digits"), "{shown}");
     let link = fs::read_to_string(&link_file).unwrap();
 
     // The opt-in positional link skips the link prompt.

@@ -1,6 +1,8 @@
 //! Windows: the directory handle is held without delete sharing, which stops the directory
 //! and its ancestors from being renamed or replaced while it is open, and new files and
-//! directories get a protected access list granting only the current user.
+//! directories get a protected access list granting only the current user. The working path
+//! is read back from that handle, so it names exactly the directory that is pinned, and the
+//! volume must enforce access lists (NTFS, `ReFS`), or nothing is written there.
 
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
@@ -12,6 +14,7 @@ use std::path::{Path, PathBuf};
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
+use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
 
 pub struct Dir {
     path: PathBuf,
@@ -21,17 +24,16 @@ pub struct Dir {
 
 impl Dir {
     pub fn open(given: &Path) -> io::Result<(Self, PathBuf)> {
-        // Resolved once; every later operation uses the resolved path while the handle pins
-        // it. Callers see the path as they gave it.
-        let path = std::fs::canonicalize(given)?;
-        let pin = OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(&path)?;
+        // Opening follows a link naming the directory (resolved once) and pins the target.
+        // The working path comes from the handle, never from an earlier resolution, so a
+        // link swapped before or after the open can't point operations elsewhere. Callers
+        // see the path as they gave it.
+        let pin = pin_dir(given)?;
         if !pin.metadata()?.is_dir() {
             return Err(io::Error::other("not a directory"));
         }
+        require_acls(acl::volume_flags(&pin)?)?;
+        let path = acl::final_path(&pin)?;
         Ok((Self { path, _pin: pin }, given.to_path_buf()))
     }
 
@@ -79,7 +81,33 @@ impl Dir {
 }
 
 pub fn create_private_dir(path: &Path) -> io::Result<()> {
+    // Refuse before creating anything on a volume that would ignore the private DACL.
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    require_acls(acl::volume_flags(&pin_dir(parent)?)?)?;
     acl::create_dir(path)
+}
+
+fn pin_dir(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+/// Fails unless the volume enforces access lists. On FAT, for example, a private DACL is
+/// silently ignored, so nothing private may be written there.
+pub fn require_acls(volume_flags: u32) -> io::Result<()> {
+    if volume_flags & FILE_PERSISTENT_ACLS == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this volume can't keep files private (it has no access-list support, as on FAT); choose a directory on an NTFS or ReFS volume",
+        ));
+    }
+    Ok(())
 }
 
 fn wide(path: &OsStr) -> Vec<u16> {
@@ -91,10 +119,12 @@ fn wide(path: &OsStr) -> Vec<u16> {
 /// allocation is closed or freed on all paths.
 #[allow(unsafe_code)]
 mod acl {
+    use std::ffi::OsString;
     use std::fs::File;
     use std::io;
-    use std::os::windows::io::FromRawHandle;
-    use std::path::Path;
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::path::{Path, PathBuf};
     use std::ptr::null_mut;
 
     use windows_sys::Win32::Foundation::{
@@ -110,7 +140,8 @@ mod acl {
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
-        FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
+        GetVolumeInformationByHandleW, VOLUME_NAME_DOS,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -229,6 +260,56 @@ mod acl {
         }
         // SAFETY: `handle` is a new, valid file handle owned by nothing else.
         Ok(unsafe { File::from_raw_handle(handle) })
+    }
+
+    /// The filesystem flags of the volume holding `file`.
+    pub fn volume_flags(file: &File) -> io::Result<u32> {
+        let mut flags = 0u32;
+        // SAFETY: the handle is valid for the life of `file`; only the flags out pointer is
+        // requested, every other buffer is null with size zero.
+        let ok = unsafe {
+            GetVolumeInformationByHandleW(
+                file.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                &raw mut flags,
+                null_mut(),
+                0,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(flags)
+    }
+
+    /// The final, resolved path of the object `file` refers to, such as `\\?\C:\dir`.
+    pub fn final_path(file: &File) -> io::Result<PathBuf> {
+        let mut buffer = vec![0u16; 512];
+        loop {
+            let size = u32::try_from(buffer.len()).expect("bounded buffer");
+            // SAFETY: the buffer is writable for `size` UTF-16 units; the handle is valid for
+            // the life of `file`.
+            let len = unsafe {
+                GetFinalPathNameByHandleW(
+                    file.as_raw_handle(),
+                    buffer.as_mut_ptr(),
+                    size,
+                    FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
+                )
+            };
+            if len == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let len = len as usize;
+            if len < buffer.len() {
+                return Ok(PathBuf::from(OsString::from_wide(&buffer[..len])));
+            }
+            // Too small: `len` is the size needed, terminator included.
+            buffer.resize(len, 0);
+        }
     }
 
     /// Creates a new directory with the private DACL.
