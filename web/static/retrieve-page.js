@@ -1,4 +1,4 @@
-import { OPEN_WARNING, openErrorText, retrieveErrorText, storeModeNotice } from "./compose.js";
+import { LOST_IN_TRANSIT, OPEN_WARNING, openErrorText, retrieveErrorText, storeModeNotice } from "./compose.js";
 import { config } from "./config.js";
 import { openPayload } from "./crypto.js";
 import { exportNames } from "./export-names.js";
@@ -35,27 +35,34 @@ export function initRetrievePage() {
         }
         button.disabled = true;
         setFeedback(status, "Fetching the encrypted message...", "success");
-        let blob;
+        let response;
         try {
-            const response = await fetch(`/api/messages/${encodeURIComponent(messageId)}/retrieve`, {
+            response = await fetch(`/api/messages/${encodeURIComponent(messageId)}/retrieve`, {
                 headers: { "X-Message-Pin": pin },
                 cache: "no-store",
             });
-            if (!response.ok) {
-                const body = await parseJson(response);
-                setFeedback(status, retrieveErrorText(response.status, body.error), "error");
-                button.disabled = false;
-                return;
-            }
-            blob = new Uint8Array(await response.arrayBuffer());
         } catch {
+            // No response at all: the request may never have reached the server.
             setFeedback(status, "Couldn't reach the server. Check your connection and try again.", "error");
             button.disabled = false;
             return;
         }
+        if (!response.ok) {
+            const body = await parseJson(response);
+            setFeedback(status, retrieveErrorText(response.status, body.error), "error");
+            button.disabled = false;
+            return;
+        }
 
-        // From here on the server has deleted the message, so there is no retry.
+        // A 200 means the server has deleted the message. Nothing after this point can be retried.
         form.classList.add("hidden");
+        let blob;
+        try {
+            blob = new Uint8Array(await response.arrayBuffer());
+        } catch {
+            setFeedback(status, LOST_IN_TRANSIT, "error");
+            return;
+        }
         try {
             setFeedback(status, "Decrypting in this browser...", "success");
             render(await openPayload(blob, passphrase, pin));
@@ -69,7 +76,7 @@ export function initRetrievePage() {
 function render(payload) {
     if (payload.text !== null) {
         $("message-output").textContent = payload.text;
-        $("copy-text-button").addEventListener("click", (event) => copyText(payload.text, event.currentTarget));
+        $("copy-text-button").addEventListener("click", (event) => copyText(payload.text, event.currentTarget, $("message-output")));
         $("text-output").classList.remove("hidden");
     }
     if (payload.files.length > 0) {

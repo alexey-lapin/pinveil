@@ -32,16 +32,16 @@ export function formatBytes(bytes) {
 
 /**
  * Copies `text`, and says so on the button for a moment. Without clipboard access (plain HTTP
- * off localhost, or a denied permission) it selects `field` so the user can copy by hand.
+ * off localhost, or a denied permission) it selects `source`, an input or any element holding
+ * the text, so the user can copy by hand.
  */
-export async function copyText(text, button, field) {
+export async function copyText(text, button, source) {
     const label = button.textContent;
     try {
         await navigator.clipboard.writeText(text);
         button.textContent = "Copied";
     } catch {
-        field?.select();
-        button.textContent = "Selected: press Ctrl+C or Cmd+C";
+        button.textContent = selectContents(source) ? "Selected: press Ctrl+C or Cmd+C" : "Copy failed: select the text and copy it";
     }
     setTimeout(() => {
         button.textContent = label;
@@ -63,4 +63,21 @@ export function saveFile(parts, name) {
     anchor.remove();
     // Revoking right away can cancel the download in some browsers.
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Selects the text of an input or an element. Returns whether anything is selected. */
+function selectContents(source) {
+    if (!source) {
+        return false;
+    }
+    if (typeof source.select === "function") {
+        source.select();
+    } else {
+        const range = document.createRange();
+        range.selectNodeContents(source);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+    return true;
 }

@@ -76,6 +76,30 @@ export function createErrorText(error, config) {
     }
 }
 
+/** The server's label for a TTL (APP.md, "Client config"), for a default that isn't a preset. */
+export function ttlLabel(seconds) {
+    const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+    if (seconds % 3600 === 0) {
+        return plural(seconds / 3600, "hour");
+    }
+    if (seconds % 60 === 0) {
+        return plural(seconds / 60, "minute");
+    }
+    return plural(seconds, "second");
+}
+
+/**
+ * The expiry choices, shortest first: every preset, plus the default when it isn't one of
+ * them, so the advertised default is always selectable even with no presets at all.
+ */
+export function ttlChoices(config) {
+    const choices = config.ttlPresets.map(({ seconds, label }) => ({ seconds, label }));
+    if (!choices.some((choice) => choice.seconds === config.defaultTtlSeconds)) {
+        choices.push({ seconds: config.defaultTtlSeconds, label: ttlLabel(config.defaultTtlSeconds) });
+    }
+    return choices.sort((a, b) => a.seconds - b.seconds);
+}
+
 /**
  * The Custom expiry range in whole minutes, inside the server's TTL range, or `null` when no
  * whole minute fits it.
@@ -126,6 +150,9 @@ export function retrieveErrorText(status, serverMessage) {
             return serverMessage || "The server couldn't return the message. Try again shortly.";
     }
 }
+
+export const LOST_IN_TRANSIT =
+    "The connection dropped while the message was downloading. The server has already deleted it, so it can't be opened again. Ask the sender to send a new one.";
 
 /** Recipient-facing text when a delivered message can't be opened (APP.md, "Validation"). */
 export function openErrorText(error) {

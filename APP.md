@@ -432,6 +432,8 @@ The server writes one line per request to stderr: method, path, status, and dura
 - The create page checks every limit from the files' names, types, and sizes before reading any file. A browser that reports no usable MIME type records `application/octet-stream`. The multipart part carrying the blob always has the filename `blob`.
 - Single downloads and the zip (`pinveil-files.zip`) are saved as `application/octet-stream`, so a stored MIME type can never make the browser render a file.
 - Without a fragment, the retrieve page disables the PIN form, so the message can't be consumed by a link that can't decrypt it.
+- Once the server answers 200, the retrieve page treats the message as consumed. If the body then fails to arrive, or the message can't be opened, it says the message is gone and offers no retry.
+- The expiry list holds every preset plus the default when the default isn't a preset, so the advertised default is always selected first, even with no presets. Custom (whole minutes) appears only when at least one whole minute fits the server's range.
 
 ## CLI
 

@@ -21,12 +21,13 @@ function serverBinary() {
 }
 
 /**
- * Starts a server with `env` on a random loopback port, behind a recording proxy. Resolves
+ * Starts a server with `env` on a random loopback port, behind a recording proxy. With
+ * `truncateRetrieve`, the proxy cuts every successful retrieve response short. Resolves
  * to `{url, wire, stop}`: `url` is the proxy, and `wire` lists every request that reached it
  * as `{method, path, headers, body}` with the raw body bytes. Browsers don't expose multipart
  * bodies reliably (Chromium reports none), so leak checks read these instead.
  */
-export async function startServer(env = {}) {
+export async function startServer(env = {}, { truncateRetrieve = false } = {}) {
     const upstream = await startBinary(env);
     const wire = [];
     const proxy = createServer((req, res) => {
@@ -37,6 +38,14 @@ export async function startServer(env = {}) {
             wire.push({ method: req.method, path: req.url, headers: req.headers, body });
             const out = forward(`${upstream.url}${req.url}`, { method: req.method, headers: req.headers }, (answer) => {
                 res.writeHead(answer.statusCode, answer.headers);
+                if (truncateRetrieve && answer.statusCode === 200 && req.url.endsWith("/retrieve")) {
+                    // Deliver the 200 headers and two body bytes, then drop the connection.
+                    answer.once("data", (chunk) => {
+                        res.write(chunk.subarray(0, 2));
+                        setTimeout(() => res.socket?.destroy(), 100);
+                    });
+                    return;
+                }
                 answer.pipe(res);
             });
             out.on("error", () => res.destroy());

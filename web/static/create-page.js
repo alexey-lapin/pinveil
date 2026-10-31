@@ -6,6 +6,7 @@ import {
     mimeTypeOf,
     storeModeNotice,
     textPart,
+    ttlChoices,
     ttlFromMinutes,
 } from "./compose.js";
 import { config } from "./config.js";
@@ -157,11 +158,11 @@ async function create({ text, files, pin }, status) {
 }
 
 function initTtl(select) {
-    for (const preset of config.ttlPresets) {
+    for (const choice of ttlChoices(config)) {
         const option = document.createElement("option");
-        option.value = String(preset.seconds);
-        option.textContent = preset.label;
-        option.selected = preset.seconds === config.defaultTtlSeconds;
+        option.value = String(choice.seconds);
+        option.textContent = choice.label;
+        option.selected = choice.seconds === config.defaultTtlSeconds;
         select.append(option);
     }
     const range = customTtlMinutes(config);
@@ -177,7 +178,9 @@ function initTtl(select) {
         input.value = String(Math.min(Math.max(Math.round(config.defaultTtlSeconds / 60), range.min), range.max));
         $("custom-ttl-range").textContent = `From ${range.min} to ${range.max} minutes.`;
     }
-    select.addEventListener("change", () => field.classList.toggle("hidden", select.value !== "custom"));
+    const showCustom = () => field.classList.toggle("hidden", select.value !== "custom");
+    select.addEventListener("change", showCustom);
+    showCustom();
 }
 
 function selectedTtl() {

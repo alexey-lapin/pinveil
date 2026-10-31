@@ -8,7 +8,9 @@ import {
     mimeTypeOf,
     openErrorText,
     storeModeNotice,
+    ttlChoices,
     ttlFromMinutes,
+    ttlLabel,
 } from "../../web/static/compose.js";
 import { blobLength } from "../../web/static/envelope.js";
 import { encodePayload } from "../../web/static/payload.js";
@@ -98,4 +100,19 @@ test("WEB-retrieve.open-errors stay generic and say the message is gone", () => 
     for (const error of [new PinveilError("header", "malformed"), new PinveilError("payload", "truncated"), new Error("x")]) {
         assert.equal(openErrorText(error), "Cannot open this message. The server has already deleted it.");
     }
+});
+
+test("WEB-create.ttl-default choices always include the default, shortest first", () => {
+    const presets = [
+        { seconds: 300, label: "5 minutes" },
+        { seconds: 900, label: "15 minutes" },
+    ];
+    assert.deepEqual(
+        ttlChoices({ ...config, ttlPresets: presets, defaultTtlSeconds: 600 }).map((c) => c.label),
+        ["5 minutes", "10 minutes", "15 minutes"],
+    );
+    assert.deepEqual(ttlChoices({ ...config, ttlPresets: presets, defaultTtlSeconds: 900 }), presets);
+    assert.deepEqual(ttlChoices({ ...config, ttlPresets: [], defaultTtlSeconds: 30 }), [{ seconds: 30, label: "30 seconds" }]);
+    // Same wording as the server's labels.
+    assert.deepEqual([3600, 7200, 60, 90, 1].map(ttlLabel), ["1 hour", "2 hours", "1 minute", "90 seconds", "1 second"]);
 });
