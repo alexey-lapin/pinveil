@@ -30,8 +30,8 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 | Id | Rule | Owner | Tests (planned ids) | Status |
 |---|---|---|---|---|
-| INV-1 | Plaintext, names, and MIME types never leave a client unencrypted. The passphrase never reaches the server. The PIN does, over TLS, and only its verifier is stored. The only TLS exception is `--insecure-http` to loopback. | P1.5, P2.4, P3.4, P4.3, P4.9 | `INV-1.browser-request-capture`, `INV-1.cli-request-capture`, `INV-1.no-raw-pin-stored`, `INV-1.insecure-http-loopback-only` | planned |
-| INV-2 | The fragment is never sent, logged, or put in errors | P3.4, P4.1, P4.3, P4.9 | `INV-2.browser-requests`, `INV-2.cli-requests`, `INV-2.cli-error-redaction`, `INV-2.parser-diagnostics-redacted` | planned |
+| INV-1 | Plaintext, names, and MIME types never leave a client unencrypted. The passphrase never reaches the server. The PIN does, over TLS, and only its verifier is stored. The only TLS exception is `--insecure-http` to loopback. | P1.5, P2.4, P3.4, P4.3, P4.9 | `INV-1.browser-request-capture`, `INV-1.cli-request-capture`, `INV-1.no-raw-pin-stored`, `INV-1.insecure-http-loopback-only` | P3.4 part (`tests/browser` `WEB-roundtrip.text-only ...` and `.files-only ...`: a recording proxy checks every raw request body, header, and path for plaintext, names, MIME types, and the fragment; putting a file name in the multipart filename fails it) local (macOS: Node, Chromium, WebKit; Firefox and CI pending); P4 planned |
+| INV-2 | The fragment is never sent, logged, or put in errors | P3.4, P4.1, P4.3, P4.9 | `INV-2.browser-requests`, `INV-2.cli-requests`, `INV-2.cli-error-redaction`, `INV-2.parser-diagnostics-redacted` | P3.4 part (same recording-proxy checks for the fragment) local (macOS: Node, Chromium, WebKit; Firefox and CI pending); P4 planned |
 | INV-3 | The server treats blobs as opaque bytes | P2.5 | contract `inv_3_arbitrary_bytes_roundtrip` (5000 non-envelope bytes stored and returned byte for byte) | covered (CI run 41212423953 at cc6dce0) |
 | INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | core `inv_4_round_trip_needs_both_inputs`; JS `INV-4 round trip ...`; vectors `decrypt: wrong PIN`, `decrypt: wrong passphrase` | covered (CI run 41165815026 at c0d0b65) |
 | INV-5 | The PIN is stored only as a salted, peppered Argon2id hash | P2.4, P5.1 | `pin.rs` `inv_5_verifier_composition_and_params`, `inv_5_params_applied_and_old_hashes_still_verify`; `INV-5.sqlite-row-has-no-pin` (P5.1) | P2.4 parts covered (CI run 41212423953 at cc6dce0); P5.1 planned |
@@ -39,9 +39,9 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | INV-7 | Wrong attempts and the burn commit before the response | P2.6, P5.4 | store `inv_7_failures_count_then_burn_and_never_recreate`; service `inv_7_burn_sequence_then_gone`; contract `http_retrieve_pin_rules_and_burn_sequence`; `INV-7.sqlite-attempts-survive-restart` (P5.4); service `inv_7_stale_wrong_pin_never_charges_a_replacement` | P2.6 parts covered (CI run 41212423953 at cc6dce0); P5.4 planned |
 | INV-8 | Expiry is logical, and sweeps remove later | P2.3, P5.2 | service `inv_8_boundary_controlled_clock`, `inv_8_sweeper_removes_expired`; store `inv_8_sweep_removes_only_expired_at_the_boundary`, `srv_caps_count_bytes_and_reclaim_expired`; contract `inv_9_*` (expired case); `INV-8.sqlite-startup-sweep` (P5.2) | P2.3 parts covered (CI run 41212423953 at cc6dce0); P5.2 planned |
 | INV-9 | One identical 404 for every gone state | P2.6 | contract `inv_9_unknown_expired_burned_consumed_equal` | covered (CI run 41212423953 at cc6dce0) |
-| INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | P2.2 part (`storeMode` in config, contract `http_pages_and_config_match_and_are_allowlisted`) local; P3, P4, P5 planned |
-| INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | P2.2 part (CSP header, contract `inv_11_pages_load_only_same_origin_assets`) local; P3.4 request capture planned |
-| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | P1.1 parts covered (CI run 41165815026 at c0d0b65); P3.4 (real page) planned |
+| INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | P2.2 part (`storeMode` in config, contract `http_pages_and_config_match_and_are_allowlisted`) local; P3.1, P3.2 parts (JS `INV-10.browser-notice ...`; `tests/browser` `WEB-create.copy-controls ...`, `WEB-retrieve.warning-before-opening ...`) local (macOS: Node, Chromium, WebKit; Firefox and CI pending); P4, P5 planned |
+| INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | P2.2 part (CSP header, contract `inv_11_pages_load_only_same_origin_assets`) local; P3.4 request capture (`tests/browser` `expectNoLeaks`: every browser request stays on the server origin) local (macOS: Node, Chromium, WebKit; Firefox and CI pending) |
+| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | P1.1 parts covered (CI run 41165815026 at c0d0b65); P3.4 parts (`tests/browser/failures.spec.js` `INV-12.js-http-404`, `.js-truncated`, `.js-duplicates`: the real page shows the error and uploads nothing) local (macOS: Node, Chromium, WebKit; Firefox and CI pending) |
 | INV-13 | One JSON error shape on every rejection | P2.2, P2.5, P2.6 | contract `inv_13_framework_errors_use_the_json_shape` (unknown route, wrong method), `http_create_every_rejection` (missing, duplicate, unexpected part, malformed multipart, 415), `http_limits_*` (oversize, chunked), `http_retrieve_pin_rules_and_burn_sequence` (missing header), `http_static_assets_and_wordlist` (static 404); `harness::assert_error` checks shape and headers on each | covered (CI run 41212423953 at cc6dce0) |
 | INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | core `inv_14_*` (envelope, payload, crypto); JS `INV-14.*`; core `inv_14_header_negatives_derive_no_keys` and the JS vector test count key derivations: 0 for every header refusal, 1 otherwise | covered (CI run 41165815026 at c0d0b65) |
 
@@ -107,12 +107,12 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 
 ## Web UI
 
-| Id | Rule | Owner | Status |
-|---|---|---|---|
-| WEB-create | Text plus files, generated editable PIN, copy controls and warnings, limits only from config, exact size check before upload | P3.1 | planned |
-| WEB-retrieve | Warning before opening, file list, per-file downloads, export names | P3.2 | planned |
-| WEB-zip | Store-only zip read by independent readers, ZIP32 bounds | P3.3, P3.5 | planned |
-| WEB-roundtrip | Opens Rust-made blobs (P3), and real CLI round trips both ways (P4) | P3.4, P4.9 | planned |
+| Id | Rule | Owner | Tests | Status |
+|---|---|---|---|---|
+| WEB-create | Text plus files, generated editable PIN, copy controls and warnings, limits only from config, exact size check before upload | P3.1 | JS `compose.test.js` `WEB-create.*` (exact size equals the real blob size, one byte over refused, limits, TTL range), `payload.test.js` `WEB-create.measure-before-read ...`; `tests/browser` `WEB-create.generated-pin`, `.pin-override`, `.copy-controls`, `.exact-size` (refused before upload), `.limits-from-config`, `.ttl` | local (macOS: Node, Chromium, WebKit; Firefox and CI pending) |
+| WEB-retrieve | Warning before opening, file list, per-file downloads, export names | P3.2 | JS `WEB-retrieve.open-errors ...`; `tests/browser` `WEB-retrieve.warning-before-opening ...`, `.missing-fragment ...`, `WEB-roundtrip.files-only ...` (original names shown, export names downloaded) | local (macOS: Node, Chromium, WebKit; Firefox and CI pending) |
+| WEB-zip | Store-only zip read by independent readers, ZIP32 bounds | P3.3, P3.5 | JS `zip.test.js` `WEB-zip.*` (Python `zipfile` and `unzip -t` read names, contents, stored method, UTF-8 flag; ZIP32 bounds refused); `tests/browser` `WEB-roundtrip.files-only ...` reads the downloaded "Download all" zip with Python | local (macOS: Node, Chromium, WebKit; Firefox and CI pending) |
+| WEB-roundtrip | Opens Rust-made blobs (P3), and real CLI round trips both ways (P4) | P3.4, P4.9 | `tests/browser/rust-blobs.spec.js` `WEB-roundtrip.rust-made *` (every `rust-made.json` vector); `roundtrip.spec.js` browser to browser | P3.4 part local (macOS: Node, Chromium, WebKit; Firefox and CI pending); P4.9 planned |
 
 ## CLI
 
@@ -152,6 +152,6 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | 10 empty pepper silent | fixed | CFG-pepper-warn |
 | 11 403 on a live id | accepted | `ACC-403-live-id` (P2.6) |
 | 12 HTMX | accepted | n/a (design choice) |
-| 13 consume before delivery, wrong passphrase consumes, ids in logs | accepted | `ACC-wrong-passphrase-consumes` (P3.4), UI notice tests (P3.2) |
+| 13 consume before delivery, wrong passphrase consumes, ids in logs | accepted | `ACC-wrong-passphrase-consumes` (P3.4, `tests/browser/roundtrip.spec.js`), UI notice tests (P3.2, `WEB-retrieve.warning-before-opening ...`) |
 | 13a restart disclosure | fixed | INV-10 |
 | 14 leftovers | moot | n/a |

@@ -92,8 +92,53 @@ jobs:
         with:
           node-version: 24
 
+      # zip.test.js checks the browser zip writer with independent readers.
+      - name: Install zip readers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 unzip
+
       - name: Install
         run: npm ci
 
       - name: Test
         run: npm test
+
+  # Playwright against a real pinveil-server, in all three browser engines.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build server
+        run: cargo build --locked -p pinveil-server
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install
+        working-directory: tests/browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+          sudo apt-get install -y python3
+
+      - name: Test
+        working-directory: tests/browser
+        env:
+          PINVEIL_SERVER_BIN: ${{ github.workspace }}/target/debug/pinveil-server
+        run: npm test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results
+          path: tests/browser/test-results
+          retention-days: 7
