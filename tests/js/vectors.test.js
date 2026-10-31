@@ -50,17 +50,28 @@ test("FMT-vectors rust-made positive blobs open and re-seal exactly", async () =
     await checkPositive(rustMade.positive);
 });
 
-test("FMT-vectors negatives are refused at their stage", async () => {
+test("FMT-vectors negatives are refused at their stage; INV-14 header refusals derive no keys", async (t) => {
     assert.ok(jsMade.negative.length >= 20);
+    // Count key derivations (every derivation starts with importKey(..., "PBKDF2", ...)).
+    let derivations = 0;
+    const importKey = crypto.subtle.importKey.bind(crypto.subtle);
+    t.mock.method(crypto.subtle, "importKey", (format, keyData, algorithm, ...rest) => {
+        if (algorithm === "PBKDF2") {
+            derivations += 1;
+        }
+        return importKey(format, keyData, algorithm, ...rest);
+    });
+    let headerCases = 0;
     for (const vector of jsMade.negative) {
-        const started = performance.now();
+        const before = derivations;
         await assert.rejects(
             openPayload(base64Decode(vector.blob), vector.passphrase, vector.pin),
             (error) => error.stage === vector.stage,
             `${vector.case}: expected stage ${vector.stage}`,
         );
-        if (vector.stage === "header") {
-            assert.ok(performance.now() - started < 100, `${vector.case}: header refusal must not derive keys`);
-        }
+        const expected = vector.stage === "header" ? 0 : 1;
+        assert.equal(derivations - before, expected, `${vector.case}: key derivations`);
+        headerCases += vector.stage === "header" ? 1 : 0;
     }
+    assert.ok(headerCases >= 10);
 });

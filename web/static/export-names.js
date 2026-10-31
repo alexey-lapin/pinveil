@@ -8,9 +8,11 @@ import { MAX_NAME_BYTES } from "./protocol.js";
 
 // Windows-invalid characters plus C0 and C1 control characters (Rust's `char::is_control`).
 const INVALID = /[/\\:*?"<>|\u0000-\u001f\u007f-\u009f]/gu;
+// Reserved on Windows with or without an extension, in any case. Microsoft's naming rules also
+// reserve COM and LPT followed by superscript one, two, or three.
 const WINDOWS_DEVICES = new Set([
     "con", "prn", "aux", "nul",
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((n) => [`com${n}`, `lpt${n}`]),
+    ...["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].flatMap((n) => [`com${n}`, `lpt${n}`]),
 ]);
 const encoder = new TextEncoder();
 
@@ -47,8 +49,12 @@ function disambiguate(name, used) {
     const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
     for (let n = 2; ; n += 1) {
         const suffix = ` (${n})`;
-        const room = Math.max(0, MAX_NAME_BYTES - utf8Length(suffix) - utf8Length(extension));
-        const candidate = `${truncate(stem, room)}${suffix}${extension}`;
+        // Keep the extension only if at least one byte of the stem still fits beside it;
+        // otherwise number the whole name, cut to size.
+        const keep = utf8Length(suffix) + utf8Length(extension) < MAX_NAME_BYTES;
+        const [base, ext] = keep ? [stem, extension] : [name, ""];
+        const room = MAX_NAME_BYTES - utf8Length(suffix) - utf8Length(ext);
+        const candidate = `${truncate(base, room)}${suffix}${ext}`;
         if (!used.has(candidate.toLowerCase())) {
             return candidate;
         }

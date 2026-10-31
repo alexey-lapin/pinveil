@@ -35,7 +35,8 @@ const HEADER_KEYS = [
 ];
 
 const encoder = new TextEncoder();
-const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+// `ignoreBOM: true` keeps a leading U+FEFF, so a BOM before the header JSON is refused.
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function headerError(reason) {
     return new PinveilError("header", reason);

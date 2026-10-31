@@ -19,6 +19,16 @@ use crate::generate::is_valid_pin;
 use crate::payload::{Payload, PayloadError, decode_payload};
 use crate::protocol::{CONTENT_KEY_LEN, IV_LEN, KDF_SALT_LEN, WRAPPED_KEY_LEN};
 
+// The cipher objects copy key material into their own state (AES key schedules, GHASH).
+// With the crates' `zeroize` features on, that state is wiped on drop; this fails to compile
+// if a dependency change ever loses the guarantee. `hmac` and `sha2` have `zeroize` enabled
+// for PBKDF2's internal state as well.
+const _: () = {
+    const fn wiped_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+    wiped_on_drop::<Aes256Gcm>();
+    wiped_on_drop::<KwAes256>();
+};
+
 /// Why sealing failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SealError {
@@ -166,7 +176,15 @@ pub fn open_payload(blob: &[u8], passphrase: &str, pin: &str) -> Result<Payload,
     Ok(decode_payload(&plaintext)?)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Key derivations on this thread, so tests can prove stage one runs none.
+    pub(crate) static KDF_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn derive_kek(passphrase: &str, pin: &str, salt: &[u8], iterations: u32) -> Zeroizing<[u8; 32]> {
+    #[cfg(test)]
+    KDF_CALLS.with(|calls| calls.set(calls.get() + 1));
     let input = Zeroizing::new(format!("{passphrase}{pin}"));
     let mut kek = Zeroizing::new([0u8; 32]);
     pbkdf2::pbkdf2_hmac::<Sha256>(input.as_bytes(), salt, iterations, kek.as_mut_slice());
@@ -305,9 +323,46 @@ mod tests {
 
     #[test]
     fn open_refuses_a_bad_pin_without_deriving() {
+        let blob = sealed();
+        let before = kdf_calls();
         assert_eq!(
-            open(&sealed(), PASSPHRASE, "12a456").unwrap_err(),
+            open(&blob, PASSPHRASE, "12a456").unwrap_err(),
             OpenError::InvalidPin
         );
+        assert_eq!(kdf_calls(), before);
+    }
+
+    fn kdf_calls() -> usize {
+        super::KDF_CALLS.with(std::cell::Cell::get)
+    }
+
+    /// INV-14.bad-header-before-kdf, counted rather than timed: every header-stage negative
+    /// in the shared vectors is refused with zero key derivations, and the others derive once.
+    #[test]
+    fn inv_14_header_negatives_derive_no_keys() {
+        use base64::Engine;
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/vectors/js-made.json")).unwrap();
+        let mut header_cases = 0;
+        for case in vectors["negative"].as_array().unwrap() {
+            let blob = base64::engine::general_purpose::STANDARD
+                .decode(case["blob"].as_str().unwrap())
+                .unwrap();
+            let before = kdf_calls();
+            let error = open_payload(
+                &blob,
+                case["passphrase"].as_str().unwrap(),
+                case["pin"].as_str().unwrap(),
+            )
+            .unwrap_err();
+            let derived = kdf_calls() - before;
+            if error.stage() == "header" {
+                header_cases += 1;
+                assert_eq!(derived, 0, "{}", case["case"]);
+            } else {
+                assert_eq!(derived, 1, "{}", case["case"]);
+            }
+        }
+        assert!(header_cases >= 10);
     }
 }

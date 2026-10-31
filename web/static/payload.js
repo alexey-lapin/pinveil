@@ -22,7 +22,9 @@ export const CEILING_LIMITS = Object.freeze({
 });
 
 const encoder = new TextEncoder();
-const strictDecoder = new TextDecoder("utf-8", { fatal: true });
+// `ignoreBOM: true` keeps a leading U+FEFF as data instead of silently dropping it, so text
+// round-trips exactly and a BOM before the manifest JSON is refused, as in core.
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 function payloadError(reason) {
     return new PinveilError("payload", reason);
@@ -44,6 +46,10 @@ function checkEntries(textBytes, files) {
         throw payloadError("empty");
     }
     for (const file of files) {
+        // Lone surrogates can't be encoded as UTF-8; core's strings refuse them too.
+        if (!file.name.isWellFormed() || !file.mimeType.isWellFormed()) {
+            throw payloadError("malformed");
+        }
         const nameBytes = byteLength(file.name);
         if (nameBytes < 1 || nameBytes > MAX_NAME_BYTES) {
             throw payloadError("bad-name");
@@ -60,6 +66,9 @@ function checkEntries(textBytes, files) {
  * `limits` (`{maxFiles, maxManifestBytes}`, at or below the ceilings).
  */
 export function encodePayload({ text = null, files = [] }, limits) {
+    if (text !== null && !text.isWellFormed()) {
+        throw payloadError("invalid-text");
+    }
     const textBytes = text === null ? null : encoder.encode(text);
     checkEntries(textBytes, files);
     if (files.length > limits.maxFiles) {
@@ -158,10 +167,14 @@ export function decodePayload(bytes) {
         return { name: entry.name, mimeType: entry.mimeType, data };
     });
     checkEntries(textBytes, files);
-    if (manifestJson(textBytes, files) !== strictDecoder.decode(manifestBytes)) {
+    if (!bytesEqual(encoder.encode(manifestJson(textBytes, files)), manifestBytes)) {
         throw payloadError("not-canonical");
     }
     return { text, files };
+}
+
+function bytesEqual(a, b) {
+    return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
 function isPlainObject(value) {

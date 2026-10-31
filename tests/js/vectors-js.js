@@ -63,6 +63,18 @@ const POSITIVE = [
             ],
         },
     },
+    {
+        case: "escaping in manifest strings: quotes, backslash, controls, DEL, non-ASCII",
+        passphrase: "alpha-bravo-charlie-delta",
+        pin: "424242",
+        kdfIterations: 600_000,
+        payload: {
+            text: null,
+            files: [file('q"uo\\te\b\t\n\f\r\u0001\u001f\u007f é🗝\u2028.txt', 'text/x-"odd"\\', enc.encode("x"))],
+        },
+    },
+    { case: "text starting with a byte-order mark", passphrase: "alpha-bravo-charlie-delta", pin: "100200", kdfIterations: 600_000, payload: { text: "\uFEFFhello", files: [] } },
+    { case: "text that is only a byte-order mark", passphrase: "alpha-bravo-charlie-delta", pin: "100201", kdfIterations: 600_000, payload: { text: "\uFEFF", files: [] } },
     { case: "maximum KDF iterations", passphrase: "zoom-zoom-zoom-zoom", pin: "314159", kdfIterations: 2_000_000, payload: { text: "slow", files: [] } },
 ];
 
@@ -95,6 +107,16 @@ function framed(json, body = new Uint8Array()) {
 }
 
 const BASE = { passphrase: "alpha-bravo-charlie-delta", pin: "123456" };
+
+/** Inserts a UTF-8 BOM before the manifest JSON and grows the length prefix to match. */
+function withBom(bytes) {
+    const manifestLength = new DataView(bytes.buffer).getUint32(0, false);
+    const out = new Uint8Array(bytes.length + 3);
+    new DataView(out.buffer).setUint32(0, manifestLength + 3, false);
+    out.set([0xef, 0xbb, 0xbf], 4);
+    out.set(bytes.subarray(4), 7);
+    return out;
+}
 
 async function negatives() {
     const base = (await seal({ ...BASE, kdfIterations: 600_000, payload: { text: "negative base", files: [] } }, 100)).blob;
@@ -140,6 +162,9 @@ async function negatives() {
             await sealRaw(framed(`{"text":null,"files":[${Array(257).fill('{"name":"a","mimeType":"a/b","byteLength":0}').join(",")}]}`), 109),
             "payload",
         ],
+        ["payload: byte-order mark before the manifest", await sealRaw(withBom(framed(manifest, enc.encode("hi"))), 111), "payload"],
+        ["payload: lone high surrogate in a file name", await sealRaw(framed('{"text":null,"files":[{"name":"\\ud800.txt","mimeType":"a/b","byteLength":0}]}'), 112), "payload"],
+        ["payload: lone low surrogate in a MIME type", await sealRaw(framed('{"text":null,"files":[{"name":"a","mimeType":"\\udc00","byteLength":0}]}'), 113), "payload"],
         ["payload: declared length beyond 2^53-1", await sealRaw(framed('{"text":{"byteLength":9007199254740992},"files":[]}'), 110), "payload"],
     ];
     return cases.map(([name, blob, stage, override = {}]) => ({

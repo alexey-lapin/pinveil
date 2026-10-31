@@ -8,9 +8,12 @@ use std::collections::HashSet;
 use crate::protocol::MAX_NAME_BYTES;
 
 const WINDOWS_INVALID: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+/// Reserved on Windows with or without an extension, in any case. Microsoft's naming rules
+/// also reserve COM and LPT followed by superscript one, two, or three.
 const WINDOWS_DEVICES: &[&str] = &[
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    "com9", "com¹", "com²", "com³", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8",
+    "lpt9", "lpt¹", "lpt²", "lpt³",
 ];
 
 /// Maps each name to a safe, unique export name, in order. Names that differ only by case
@@ -68,7 +71,14 @@ fn disambiguate(name: &str, used: &HashSet<String>) -> String {
     let mut n = 2usize;
     loop {
         let suffix = format!(" ({n})");
-        let room = MAX_NAME_BYTES.saturating_sub(suffix.len() + extension.len());
+        // Keep the extension only if at least one byte of the stem still fits beside it;
+        // otherwise number the whole name, cut to size.
+        let (stem, extension) = if suffix.len() + extension.len() < MAX_NAME_BYTES {
+            (stem, extension)
+        } else {
+            (name, "")
+        };
+        let room = MAX_NAME_BYTES - suffix.len() - extension.len();
         let candidate = format!("{}{suffix}{extension}", truncate(stem, room));
         if !used.contains(&candidate.to_lowercase()) {
             return candidate;

@@ -11,6 +11,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use pinveil_core::crypto::{open_payload, seal};
 use pinveil_core::entropy::{Entropy, EntropyError};
+use pinveil_core::envelope::decode_outer;
 use pinveil_core::payload::{CreationLimits, FileEntry, Payload, encode_payload};
 use serde::{Deserialize, Serialize};
 
@@ -175,19 +176,18 @@ fn fmt_vectors_js_made_negative_refused_at_stage() {
     let file: VectorFile = serde_json::from_str(&read("js-made.json")).unwrap();
     assert!(file.negative.len() >= 20);
     for case in &file.negative {
-        let started = std::time::Instant::now();
-        let error = open_payload(&b64(&case.blob), &case.passphrase, &case.pin)
+        let blob = b64(&case.blob);
+        let error = open_payload(&blob, &case.passphrase, &case.pin)
             .expect_err(&format!("{}: should be refused", case.case));
         assert_eq!(error.stage(), case.stage, "{}: {error}", case.case);
-        if case.stage == "header" {
-            // Stage one does no key derivation, so even a huge KDF count fails at once.
-            assert!(
-                started.elapsed() < std::time::Duration::from_millis(100),
-                "{}: took {:?}",
-                case.case,
-                started.elapsed()
-            );
-        }
+        // Header-stage refusals come from `decode_outer`, which does no cryptographic work.
+        // The crypto module's own test counts key derivations to prove the ordering.
+        assert_eq!(
+            decode_outer(&blob).is_err(),
+            case.stage == "header",
+            "{}",
+            case.case
+        );
     }
 }
 

@@ -191,7 +191,7 @@ Both clients run this locally: the browser through Web Crypto, the CLI through t
 | Key wrap | AES-KW (RFC 3394) of the raw CEK under the KEK. |
 | Encryption | AES-256-GCM with a 12-byte random IV and a 128-bit tag. AAD is the wrapped CEK bytes, which ties the ciphertext to its wrapped key. |
 
-A CSPRNG failure aborts creation. The accepted KDF iteration range is a protocol constant shared by both clients. Its final bounds come from benchmarks during implementation, and the server refuses to start with `pbkdf2_iterations` outside it.
+A CSPRNG failure aborts creation. The accepted KDF iteration range is a protocol constant shared by both clients (see [Validation](#validation)), and the server refuses to start with `pbkdf2_iterations` outside it. Clients wipe key material after use, including the internal state of the cipher implementations where the platform allows it.
 
 When decrypting, the client reads the iteration count, salt, and IV from the blob header, not from the current config, so old blobs still decrypt after the operator changes `pbkdf2_iterations`.
 
@@ -239,26 +239,54 @@ The GCM plaintext:
 - Text is UTF-8. `mimeType` defaults to `application/octet-stream`.
 - Lengths are byte counts, never character counts. Files are identified by array index, and names need not be unique.
 
+### Canonical encoding
+
+The outer header and the inner manifest are each accepted only in one exact byte form, so the two clients accept exactly the same inputs. A header or manifest whose bytes differ from the canonical form is refused, even if it holds the same data. Canonical form is:
+
+- keys in exactly the order shown in the examples above, no other keys, and the `text` key always present (`null` when there is no text),
+- no whitespace between tokens, and no byte-order mark,
+- integers written in plain decimal, with no sign, fraction, or exponent,
+- strings escaped minimally: `"` and `\` are backslash-escaped, U+0008, U+0009, U+000A, U+000C, and U+000D use `\b`, `\t`, `\n`, `\f`, and `\r`, other characters below U+0020 use `\u00XX` with lowercase hex, and everything else, including non-ASCII characters, is written as raw UTF-8,
+- strings well-formed Unicode: no unpaired surrogates, escaped or otherwise,
+- base64 in the standard alphabet with padding, exactly as produced by encoding the decoded bytes.
+
+This is the output of JavaScript's `JSON.stringify` and of Rust's `serde_json::to_vec` for these structures, which both clients use.
+
 ### Validation
 
-Before any crypto work, a client checks the outer header:
+Before any crypto work, a client checks the outer envelope (stage one):
 
+- there are at least 4 bytes, the length prefix fits the buffer, and the header is at most 1024 bytes,
 - `schemaVersion` is supported,
+- the header has exactly the expected fields with the expected types,
 - the algorithm labels are the ones above,
 - `kdfIterations` is in the accepted range,
-- the base64 fields decode to the right sizes.
+- the base64 fields decode to the right sizes (40-byte wrapped key, 16-byte salt, 12-byte IV),
+- the header is in canonical form,
+- the ciphertext is at least as long as the 16-byte tag.
 
-This first stage also checks the outer length prefix, before parsing the JSON header: there must be at least 4 bytes, and the prefix must fit the buffer.
-
-After authenticated decryption, it checks the manifest:
+After authenticated decryption, it checks the payload (stage two):
 
 - the length prefix fits the buffer, and the manifest is at most the manifest ceiling,
-- every length is a non-negative integer, and the sum doesn't overflow,
+- the manifest is in canonical form, with exactly the expected fields and types,
+- every length is an integer from 0 to 2^53 - 1 (JavaScript's largest exact integer), and the sum doesn't overflow,
 - the bodies consume the plaintext exactly,
-- the file count is at most the file-count ceiling, and every name is at most 255 UTF-8 bytes,
-- the required fields are present and well formed.
+- the text is valid UTF-8, and a leading U+FEFF is kept as part of the text,
+- the file count is at most the file-count ceiling,
+- every name is 1 to 255 UTF-8 bytes, and every MIME type is 1 to 255 bytes,
+- there is text or at least one file.
 
-The decoding ceilings (file count, manifest size, 255-byte names, and the accepted KDF range) are protocol constants that both clients share. Operators can't change them. Their final values come from fixtures and benchmarks during implementation, starting at 256 files and 256 KiB.
+The decoding ceilings are protocol constants that both clients share, and operators can't change them:
+
+| Constant | Value |
+|---|---|
+| Accepted KDF iterations | 600,000 to 2,000,000. Provisional: the final range is set by the benchmark tracked in `docs/coverage.md` (`KDF-range`) before v1. |
+| Outer header | 1024 bytes |
+| Manifest | 256 KiB |
+| Files per message | 256 |
+| File name | 255 UTF-8 bytes |
+| MIME type | 255 bytes |
+| Declared length | 2^53 - 1 |
 
 Any failure shows a generic "cannot open this message" error.
 
