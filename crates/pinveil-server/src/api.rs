@@ -85,10 +85,13 @@ async fn create(
     State(state): State<Arc<AppState>>,
     request: Request,
 ) -> Result<Response, ApiError> {
-    // Bound how many request bodies can be in flight before reading any of them.
-    let _upload = state.uploads.try_acquire().map_err(|_| {
-        ApiError::ServiceUnavailable("Too many uploads in progress, try again shortly")
-    })?;
+    // Bound how many creates are in flight before reading any body. The slot covers the
+    // whole create, its store work included, even if the client disconnects (see below).
+    let upload = Arc::clone(&state.uploads)
+        .try_acquire_owned()
+        .map_err(|_| {
+            ApiError::ServiceUnavailable("Too many uploads in progress, try again shortly")
+        })?;
     let is_multipart = request
         .headers()
         .get(header::CONTENT_TYPE)
@@ -146,7 +149,16 @@ async fn create(
         ));
     };
 
-    let created = state.service.create(blob, pin, &ttl).await?;
+    // An owned task holds the upload slot until the create finishes, so a disconnect that
+    // drops this handler can't free the slot while hashing or the insert still runs: the
+    // work in flight stays within `server.max_concurrent_uploads`.
+    let service = Arc::clone(&state.service);
+    let created = tokio::spawn(async move {
+        let _upload = upload;
+        service.create(blob, pin, &ttl).await
+    })
+    .await
+    .map_err(|_| ApiError::Internal)??;
     let body = CreateResponse {
         id: created.id,
         expires_at: created.expires_at,
@@ -177,4 +189,182 @@ async fn retrieve(
         .to_owned();
     let blob = state.service.retrieve(id, pin).await?;
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], blob).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, SystemTime};
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use pinveil_core::wordlist::Wordlist;
+    use tower::ServiceExt;
+
+    use crate::app::{AppState, router};
+    use crate::config::{Sources, load};
+    use crate::pin::PinVerifier;
+    use crate::service::{HashPool, Parts, Policy, Service, SystemClock, WordIds};
+    use crate::store::{
+        Attempt, InsertError, MemoryStore, MessageMeta, NewMessage, Store, StoreError,
+    };
+
+    /// A memory store whose inserts wait until released, counting those that started.
+    struct PausedStore {
+        inner: MemoryStore,
+        started: AtomicUsize,
+        open: Mutex<bool>,
+        gate: Condvar,
+    }
+
+    impl PausedStore {
+        fn release(&self) {
+            *self.open.lock().unwrap() = true;
+            self.gate.notify_all();
+        }
+    }
+
+    impl Store for PausedStore {
+        fn insert(&self, message: NewMessage, now: SystemTime) -> Result<(), InsertError> {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            let open = self.open.lock().unwrap();
+            drop(self.gate.wait_while(open, |open| !*open).unwrap());
+            self.inner.insert(message, now)
+        }
+        fn meta(&self, id: &str) -> Result<Option<MessageMeta>, StoreError> {
+            self.inner.meta(id)
+        }
+        fn record_failure(
+            &self,
+            id: &str,
+            g: u64,
+            max: u32,
+        ) -> Result<Option<Attempt>, StoreError> {
+            self.inner.record_failure(id, g, max)
+        }
+        fn consume(&self, id: &str, g: u64) -> Result<Option<Vec<u8>>, StoreError> {
+            self.inner.consume(id, g)
+        }
+        fn remove(&self, id: &str, g: u64) -> Result<bool, StoreError> {
+            self.inner.remove(id, g)
+        }
+        fn sweep(&self, now: SystemTime) -> Result<usize, StoreError> {
+            self.inner.sweep(now)
+        }
+    }
+
+    struct PlainVerifier;
+
+    impl PinVerifier for PlainVerifier {
+        fn hash(&self, pin: &str, salt: &str) -> String {
+            format!("{salt}:{pin}")
+        }
+        fn verify(&self, pin: &str, salt: &str, verifier: &str) -> bool {
+            verifier == format!("{salt}:{pin}")
+        }
+    }
+
+    fn create_request() -> Request<Body> {
+        let boundary = "pinveil-test-boundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"blob\"; filename=\"blob\"\r\nContent-Type: application/octet-stream\r\n\r\nciphertext\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"pin\"\r\n\r\n123456\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"ttl\"\r\n\r\n600\r\n\
+             --{boundary}--\r\n"
+        );
+        Request::post("/api/messages")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    /// A create whose client disconnects mid-insert keeps its upload slot until the insert
+    /// finishes, so replacements can't pile up store work beyond the configured bound.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn srv_admission_cancelled_create_keeps_its_upload_slot() {
+        let (config, _) = load(&Sources {
+            args: vec![],
+            env: vec![
+                ("PINVEIL_SERVER__MAX_CONCURRENT_UPLOADS".into(), "1".into()),
+                ("PINVEIL_PIN__PEPPER".into(), "p".into()),
+            ],
+            read_file: &|_| Err(std::io::Error::other("none")),
+            cpus: 2,
+        })
+        .unwrap();
+        let store = Arc::new(PausedStore {
+            inner: MemoryStore::new(10, 1_000_000),
+            started: AtomicUsize::new(0),
+            open: Mutex::new(false),
+            gate: Condvar::new(),
+        });
+        let service = Service::new(Parts {
+            store: Arc::clone(&store) as Arc<dyn Store>,
+            verifier: Arc::new(PlainVerifier),
+            pool: HashPool::new(2, 8),
+            clock: Arc::new(SystemClock),
+            ids: Arc::new(WordIds::new(Wordlist::embedded().unwrap(), 3, 6)),
+            policy: Policy::from_config(&config),
+        });
+        let app = router(Arc::new(AppState::with_service(config, service)));
+        // Opens the gate however the test ends, so a failed assertion can't leave a blocking
+        // thread waiting forever and hang the runtime's shutdown.
+        struct Release(Arc<PausedStore>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.release();
+            }
+        }
+        let _release = Release(Arc::clone(&store));
+
+        // The first create reaches its insert, then the client goes away.
+        let first = tokio::spawn(app.clone().oneshot(create_request()));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while store.started.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the insert never started"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        first.abort();
+        let _ = first.await;
+
+        // Its insert is still running, so the only upload slot is still taken.
+        // (A request let through would block on the paused insert, hence the timeout.)
+        for _ in 0..3 {
+            let response = tokio::time::timeout(
+                Duration::from_secs(5),
+                app.clone().oneshot(create_request()),
+            )
+            .await
+            .expect("refused at once, not let through to the paused store")
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+        assert_eq!(store.started.load(Ordering::SeqCst), 1, "no work piled up");
+
+        // Once the insert finishes, the slot is free again and the message was stored.
+        store.release();
+        loop {
+            let response = app.clone().oneshot(create_request()).await.unwrap();
+            if response.status() == StatusCode::CREATED {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the slot never came back"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            store.inner.usage().0,
+            2,
+            "the abandoned create still committed"
+        );
+    }
 }

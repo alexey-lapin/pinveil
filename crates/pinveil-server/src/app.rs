@@ -26,7 +26,7 @@ pub struct AppState {
     pub config: Config,
     pub service: Arc<Service>,
     /// Bounds create requests whose bodies are in flight (`server.max_concurrent_uploads`).
-    pub uploads: Semaphore,
+    pub uploads: Arc<Semaphore>,
     pub limiter: RateLimiter,
     /// The client config as script-safe JSON, built once at startup.
     client_config_json: String,
@@ -64,7 +64,7 @@ impl AppState {
         let json = serde_json::to_string(&client_config).expect("client config serializes");
         let client_config_json = assets::script_safe_json(&json);
         let index_html = INDEX_HTML.replace("{{client_config_json}}", &client_config_json);
-        let uploads = Semaphore::new(config.max_concurrent_uploads);
+        let uploads = Arc::new(Semaphore::new(config.max_concurrent_uploads));
         let limiter = RateLimiter::new(&config.rate_limit);
         Self {
             config,
