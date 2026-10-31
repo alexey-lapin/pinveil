@@ -1,0 +1,10 @@
+[package]
+name = "pinveil-core"
+version = "0.0.0"
+description = "Pinveil message format, crypto, and validation shared by the server and CLI"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
