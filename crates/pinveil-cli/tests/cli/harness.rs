@@ -171,6 +171,9 @@ impl Tty {
         env: &[(&str, &str)],
     ) -> Self {
         let mut command = shell(args, io);
+        // conpty (Windows) builds the child's environment only from variables set on the
+        // command, so pass the inherited ones explicitly; without SystemRoot, Winsock fails.
+        command.envs(std::env::vars_os());
         command.envs(env.iter().copied());
         command.env("PINVEIL_CONFIG_DIR", scratch.config_dir());
         command.current_dir(scratch.dir.path());
