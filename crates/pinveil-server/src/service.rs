@@ -379,7 +379,13 @@ impl Service {
         let now = self.clock.now();
         self.stored(move |store| {
             let removed = store.sweep(now)?;
-            store.maintain()?;
+            // The sweep itself succeeded; housekeeping that couldn't finish (a reader kept the
+            // WAL from being truncated) is reported on its own and retried next time.
+            if store.maintain().is_err() {
+                tracing::warn!(
+                    "store housekeeping did not finish; it is retried at the next sweep"
+                );
+            }
             Ok(removed)
         })
         .await

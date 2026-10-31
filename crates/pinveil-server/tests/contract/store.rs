@@ -84,6 +84,32 @@ async fn inv_10_sqlite_restart_keeps() {
     tokio::time::sleep(Duration::from_millis(1200)).await;
 
     let server = start(&env).await;
+    // The startup sweep removes the expired row by itself, before any request could do it
+    // (a retrieve would also remove an expired row, so it can't prove the sweep ran).
+    let db = rusqlite::Connection::open_with_flags(
+        dir.path().join("store.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let left: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE id = ?1",
+                [&expiring],
+                |r| r.get(0),
+            )
+            .unwrap();
+        if left == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the startup sweep never removed the expired row"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    drop(db);
     assert_eq!(
         retrieve(&server, &pending, PIN).await,
         (200, b"pending".to_vec())

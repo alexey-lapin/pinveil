@@ -22,8 +22,11 @@ use crate::store::{Attempt, InsertError, MessageMeta, NewMessage, Store, StoreEr
 
 /// The schema this build reads and writes. Any other version is refused.
 pub const SCHEMA_VERSION: &str = "1";
-/// The WAL is truncated back to this size after checkpoints.
+/// After a checkpoint resets the WAL, its file is truncated to at most this size. It doesn't
+/// cap a WAL that a long-lived reader keeps from resetting.
 const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
+/// How long a statement waits for a lock another connection holds before failing (503).
+pub const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 const SCHEMA: &str = "
 CREATE TABLE meta (
@@ -43,19 +46,6 @@ CREATE TABLE messages (
 ) STRICT;
 CREATE INDEX messages_expires_at ON messages (expires_at);
 ";
-
-/// The columns `messages` must have, in order, for this build to use the database.
-const MESSAGE_COLUMNS: &[&str] = &[
-    "generation",
-    "id",
-    "blob",
-    "size",
-    "pin_salt",
-    "pin_verifier",
-    "expires_at",
-    "failed_attempts",
-    "protocol_version",
-];
 
 /// Why the store can't be opened. The server refuses to start.
 #[derive(Debug, thiserror::Error)]
@@ -95,15 +85,16 @@ fn pepper_fingerprint(pepper: &str) -> String {
     })
 }
 
-fn nanos(time: SystemTime) -> i64 {
-    let since = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO);
-    i64::try_from(since.as_nanos()).unwrap_or(i64::MAX)
+/// A time as Unix nanoseconds, or `None` outside 1970 to 2262 (what an `i64` holds). Times
+/// are never clamped: an unrepresentable time is an error, not a different deadline.
+fn nanos(time: SystemTime) -> Option<i64> {
+    let since = time.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_nanos()).ok()
 }
 
-fn from_nanos(value: i64) -> SystemTime {
-    SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::try_from(value).unwrap_or(0))
+/// The inverse of [`nanos`]; a negative stored value is a corrupt row.
+fn from_nanos(value: i64) -> Option<SystemTime> {
+    Some(SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::try_from(value).ok()?))
 }
 
 fn storage(_: rusqlite::Error) -> StoreError {
@@ -123,7 +114,9 @@ impl SqliteStore {
             path: path.to_path_buf(),
             why,
         };
-        let mut lock_path = path.as_os_str().to_owned();
+        // One database, one lock, whatever name it is reached by.
+        let resolved = identity(path).map_err(io)?;
+        let mut lock_path = resolved.as_os_str().to_owned();
         lock_path.push(".lock");
         let lock = OpenOptions::new()
             .create(true)
@@ -134,7 +127,11 @@ impl SqliteStore {
         lock.try_lock()
             .map_err(|_| OpenError::Locked(path.to_path_buf()))?;
 
-        let conn = Connection::open(path).map_err(|e| io(e.to_string()))?;
+        let conn = Connection::open(&resolved).map_err(|e| io(e.to_string()))?;
+        // Only this process writes, but another program (a backup tool) may hold a read
+        // snapshot or a lock for a moment: wait up to this long, then answer 503.
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(|e| io(e.to_string()))?;
         let pragma = |sql: &str| -> Result<String, OpenError> {
             conn.query_row(sql, [], |row| row.get::<_, rusqlite::types::Value>(0))
                 .map(|value| match value {
@@ -155,8 +152,7 @@ impl SqliteStore {
             return Err(io("synchronous = FULL could not be set".into()));
         }
 
-        check_schema(&conn, path)?;
-        check_pepper(&conn, path, pepper)?;
+        prepare(&conn, path, pepper)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -225,86 +221,127 @@ fn incompatible(path: &Path, why: &str) -> OpenError {
     }
 }
 
-/// Creates the schema in an empty database, or checks that an existing one is exactly a
-/// version-`SCHEMA_VERSION` pinveil store.
-fn check_schema(conn: &Connection, path: &Path) -> Result<(), OpenError> {
+/// The resolved path `SQLite` and the lock use. A symlink (or Windows junction) is resolved,
+/// so every name for the database maps to one lock. Unix hard links can't be told apart by
+/// name, so a database file with more than one link is refused.
+fn identity(path: &Path) -> Result<PathBuf, String> {
+    let resolved = match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            std::fs::canonicalize(path).map_err(|e| format!("cannot resolve the path: {e}"))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let parent = match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent,
+                _ => Path::new("."),
+            };
+            let name = path.file_name().ok_or("the path has no file name")?;
+            std::fs::canonicalize(parent)
+                .map_err(|e| format!("cannot resolve the directory: {e}"))?
+                .join(name)
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(&resolved) {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() > 1 {
+            return Err("the database file has other hard links; give it a single name".into());
+        }
+    }
+    Ok(strip_verbatim(resolved))
+}
+
+/// `canonicalize` on Windows returns a `\\?\C:\...` path; a plain drive path is used instead,
+/// which `SQLite` and messages handle as usual.
+fn strip_verbatim(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\")
+            && rest.as_bytes().get(1) == Some(&b':')
+        {
+            return PathBuf::from(rest);
+        }
+    }
+    path
+}
+
+/// The schema objects (tables, indexes, triggers, views), by type and name, with their SQL
+/// whitespace-normalized. `SQLite`'s own objects are left out.
+fn schema_objects(conn: &Connection) -> rusqlite::Result<Vec<(String, String, String)>> {
+    conn.prepare(
+        "SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )?
+    .query_map([], |r| {
+        let sql: Option<String> = r.get(2)?;
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            sql.unwrap_or_default()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        ))
+    })?
+    .collect()
+}
+
+/// Initializes an empty database (schema, version, and pepper fingerprint in one
+/// transaction), or checks that an existing one is exactly a version-`SCHEMA_VERSION`
+/// pinveil store made with this pepper. Nothing is ever filled in for an existing store.
+fn prepare(conn: &Connection, path: &Path, pepper: &str) -> Result<(), OpenError> {
     let io = |why: String| OpenError::Io {
         path: path.to_path_buf(),
         why,
     };
     let incompatible = |why: &str| incompatible(path, why);
-    let tables: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-            .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
-            .map_err(|e| incompatible(&e.to_string()))?;
-    if tables.is_empty() {
+    let fingerprint = pepper_fingerprint(pepper);
+    let objects = schema_objects(conn).map_err(|e| incompatible(&e.to_string()))?;
+    if objects.is_empty() {
         conn.execute_batch(&format!(
-            "BEGIN; {SCHEMA}
-                 INSERT INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');
-                 COMMIT;"
+            "BEGIN IMMEDIATE; {SCHEMA}
+             INSERT INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');
+             INSERT INTO meta (key, value) VALUES ('pepper_fingerprint', '{fingerprint}');
+             COMMIT;"
         ))
         .map_err(|e| io(e.to_string()))?;
-    } else if tables != ["messages", "meta"] {
-        return Err(incompatible("it has tables other than a pinveil store's"));
+        return Ok(());
     }
-    let version: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| incompatible(&e.to_string()))?;
+
+    let meta_value = |key: &str| -> Option<String> {
+        conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .ok()
+    };
+    let version = meta_value("schema_version");
     if version.as_deref() != Some(SCHEMA_VERSION) {
         return Err(incompatible(&format!(
             "schema version {version:?}, expected {SCHEMA_VERSION}"
         )));
     }
-    let columns: Vec<String> = conn
-        .prepare("SELECT name FROM pragma_table_info('messages') ORDER BY cid")
-        .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
-        .map_err(|e| incompatible(&e.to_string()))?;
-    if columns != MESSAGE_COLUMNS {
-        return Err(incompatible("the messages table has unexpected columns"));
-    }
-    Ok(())
-}
-
-/// Records the pepper fingerprint in a new store, or refuses a store made with another
-/// pepper.
-fn check_pepper(conn: &Connection, path: &Path, pepper: &str) -> Result<(), OpenError> {
-    let io = |why: String| OpenError::Io {
-        path: path.to_path_buf(),
-        why,
-    };
-    let fingerprint = pepper_fingerprint(pepper);
-    let stored: Option<String> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'pepper_fingerprint'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
+    let expected = Connection::open_in_memory()
+        .and_then(|memory| {
+            memory.execute_batch(SCHEMA)?;
+            schema_objects(&memory)
+        })
         .map_err(|e| io(e.to_string()))?;
-    match stored {
-        Some(stored) if stored != fingerprint => {
-            return Err(OpenError::PepperMismatch(path.to_path_buf()));
-        }
-        Some(_) => {}
-        None => {
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('pepper_fingerprint', ?1)",
-                [&fingerprint],
-            )
-            .map_err(|e| io(e.to_string()))?;
-        }
+    if objects != expected {
+        return Err(incompatible(
+            "its tables, columns, constraints, or indexes differ from a version 1 store",
+        ));
     }
-
-    Ok(())
+    match meta_value("pepper_fingerprint") {
+        Some(stored) if stored == fingerprint => Ok(()),
+        Some(stored) if stored.len() == 64 && stored.bytes().all(|b| b.is_ascii_hexdigit()) => {
+            Err(OpenError::PepperMismatch(path.to_path_buf()))
+        }
+        // A store missing its fingerprint is never adopted under the current pepper: its
+        // messages may have been stored under another one.
+        _ => Err(incompatible("its pepper fingerprint is missing or damaged")),
+    }
 }
 
-fn sweep_in(tx: &rusqlite::Transaction<'_>, now: SystemTime) -> rusqlite::Result<usize> {
-    tx.execute("DELETE FROM messages WHERE expires_at <= ?1", [nanos(now)])
+fn sweep_in(tx: &rusqlite::Transaction<'_>, now: i64) -> rusqlite::Result<usize> {
+    tx.execute("DELETE FROM messages WHERE expires_at <= ?1", [now])
 }
 
 fn admits(
@@ -325,13 +362,16 @@ fn admits(
 
 impl Store for SqliteStore {
     fn insert(&self, message: NewMessage, now: SystemTime) -> Result<(), InsertError> {
+        let (Some(now), Some(expires_at)) = (nanos(now), nanos(message.expires_at)) else {
+            return Err(InsertError::Storage);
+        };
         let mut conn = self.lock();
         let result = (|| -> rusqlite::Result<Result<(), InsertError>> {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             // An expired row gives up its id at once (APP.md invariant 8).
             tx.execute(
                 "DELETE FROM messages WHERE id = ?1 AND expires_at <= ?2",
-                params![message.id, nanos(now)],
+                params![message.id, now],
             )?;
             let taken: bool = tx.query_row(
                 "SELECT EXISTS (SELECT 1 FROM messages WHERE id = ?1)",
@@ -359,7 +399,7 @@ impl Store for SqliteStore {
                     i64::try_from(len).unwrap_or(i64::MAX),
                     message.pin_salt,
                     message.pin_verifier,
-                    nanos(message.expires_at),
+                    expires_at,
                     message.protocol_version,
                 ],
             )?;
@@ -390,7 +430,8 @@ impl Store for SqliteStore {
                         generation: u64::try_from(r.get::<_, i64>(0)?).unwrap_or(0),
                         pin_salt: r.get(1)?,
                         pin_verifier: r.get(2)?,
-                        expires_at: from_nanos(r.get(3)?),
+                        expires_at: from_nanos(r.get(3)?)
+                            .ok_or(rusqlite::Error::IntegralValueOutOfRange(3, -1))?,
                         failed_attempts: u32::try_from(r.get::<_, i64>(4)?).unwrap_or(u32::MAX),
                     })
                 },
@@ -473,6 +514,7 @@ impl Store for SqliteStore {
     }
 
     fn sweep(&self, now: SystemTime) -> Result<usize, StoreError> {
+        let now = nanos(now).ok_or(StoreError)?;
         let mut conn = self.lock();
         let tx = conn.transaction().map_err(storage)?;
         let removed = sweep_in(&tx, now).map_err(storage)?;
@@ -481,11 +523,14 @@ impl Store for SqliteStore {
     }
 
     fn maintain(&self) -> Result<(), StoreError> {
-        // Moves committed pages into the database and truncates the WAL, so it can't grow
-        // without bound between automatic checkpoints.
-        self.lock()
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-            .map_err(storage)
+        // Moves committed pages into the database and truncates the WAL. A checkpoint that a
+        // reader blocks returns a normal row with `busy` set, not an error: report it, so the
+        // caller knows the WAL was not truncated.
+        let busy: i64 = self
+            .lock()
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))
+            .map_err(storage)?;
+        if busy == 0 { Ok(()) } else { Err(StoreError) }
     }
 }
 

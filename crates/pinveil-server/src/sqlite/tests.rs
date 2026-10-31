@@ -324,3 +324,141 @@ fn inv_10_sqlite_rows_survive_reopening() {
     store.insert(message("next", 3, t(100)), t(0)).unwrap();
     assert!(store.meta("next").unwrap().unwrap().generation > g);
 }
+
+#[test]
+fn sql_schema_same_names_wrong_constraints_are_refused() {
+    // Exactly the real schema with AUTOINCREMENT removed: generations could be reused.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let weakened = super::SCHEMA.replace(" AUTOINCREMENT", "");
+    assert_ne!(weakened, super::SCHEMA);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(&format!(
+            "{weakened} INSERT INTO meta VALUES ('schema_version', '1');
+             INSERT INTO meta VALUES ('pepper_fingerprint', '{}');",
+            super::pepper_fingerprint("pepper")
+        ))
+        .unwrap();
+    assert!(matches!(
+        SqliteStore::open(&path, "pepper", 10, 10_000),
+        Err(OpenError::Incompatible { .. })
+    ));
+    // An extra trigger is refused too.
+    let dir = tempfile::tempdir().unwrap();
+    drop(open(&dir));
+    Connection::open(dir.path().join("store.db"))
+        .unwrap()
+        .execute_batch("CREATE TRIGGER t AFTER DELETE ON messages BEGIN SELECT 1; END;")
+        .unwrap();
+    assert!(matches!(
+        SqliteStore::open(&dir.path().join("store.db"), "pepper", 10, 10_000),
+        Err(OpenError::Incompatible { .. })
+    ));
+}
+
+#[test]
+fn sql_pepper_missing_fingerprint_in_a_populated_store_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let store = SqliteStore::open(&path, "old-pepper", 10, 10_000).unwrap();
+    store.insert(message("a", 3, t(100)), t(0)).unwrap();
+    drop(store);
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DELETE FROM meta WHERE key = 'pepper_fingerprint'")
+        .unwrap();
+    let opened = SqliteStore::open(&path, "new-pepper", 10, 10_000);
+    assert!(matches!(opened, Err(OpenError::Incompatible { .. })));
+    // Nothing was adopted or rewritten.
+    let conn = Connection::open(&path).unwrap();
+    let fingerprints: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM meta WHERE key = 'pepper_fingerprint'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fingerprints, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn sql_lock_aliases_of_one_database_share_one_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = open(&dir);
+    let alias = dir.path().join("alias.db");
+    std::os::unix::fs::symlink(dir.path().join("store.db"), &alias).unwrap();
+    assert!(matches!(
+        SqliteStore::open(&alias, "pepper", 10, 10_000),
+        Err(OpenError::Locked(_))
+    ));
+    drop(first);
+    // A hard link can't be told apart by name, so it is refused outright.
+    let linked = dir.path().join("linked.db");
+    std::fs::hard_link(dir.path().join("store.db"), &linked).unwrap();
+    assert!(matches!(
+        SqliteStore::open(&linked, "pepper", 10, 10_000),
+        Err(OpenError::Io { .. })
+    ));
+}
+
+#[test]
+fn sql_busy_another_writer_turns_into_a_storage_error_after_the_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let other = Connection::open(dir.path().join("store.db")).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = std::time::Instant::now();
+    assert!(matches!(
+        store.insert(message("a", 3, t(100)), t(0)),
+        Err(InsertError::Storage)
+    ));
+    assert!(
+        started.elapsed() >= super::BUSY_TIMEOUT,
+        "it waited before failing"
+    );
+    other.execute_batch("ROLLBACK").unwrap();
+    store.insert(message("a", 3, t(100)), t(0)).unwrap();
+}
+
+#[test]
+fn sql_pragmas_a_blocked_checkpoint_is_reported_then_recovers() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    store.insert(message("a", 3, t(100)), t(0)).unwrap();
+    let reader = Connection::open(dir.path().join("store.db")).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let _: i64 = reader
+        .query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))
+        .unwrap();
+    store.insert(message("b", 3, t(100)), t(0)).unwrap();
+    assert!(
+        store.maintain().is_err(),
+        "the reader keeps the WAL from truncating"
+    );
+    reader.execute_batch("COMMIT").unwrap();
+    store.maintain().unwrap();
+}
+
+#[test]
+fn sql_expiry_times_are_checked_not_clamped() {
+    use super::{from_nanos, nanos};
+    assert_eq!(nanos(SystemTime::UNIX_EPOCH), Some(0));
+    let latest = SystemTime::UNIX_EPOCH + Duration::from_nanos(u64::try_from(i64::MAX).unwrap());
+    assert_eq!(nanos(latest), Some(i64::MAX));
+    assert_eq!(from_nanos(i64::MAX), Some(latest));
+    assert_eq!(nanos(latest + Duration::from_nanos(1)), None);
+    assert_eq!(nanos(SystemTime::UNIX_EPOCH - Duration::from_secs(1)), None);
+    assert_eq!(from_nanos(-1), None);
+    let now = t(5);
+    assert_eq!(from_nanos(nanos(now).unwrap()), Some(now));
+    // An unrepresentable expiry is a clean refusal, not a stored, changed deadline.
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    assert!(matches!(
+        store.insert(message("far", 3, latest + Duration::from_secs(1)), t(0)),
+        Err(InsertError::Storage)
+    ));
+    assert_eq!(store.usage().unwrap(), (0, 0));
+}

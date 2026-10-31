@@ -254,6 +254,16 @@ mod tests {
         }
     }
 
+    /// Opens the gate however the test ends, so a failed assertion can't leave a blocking
+    /// thread waiting forever and hang the runtime's shutdown.
+    struct Release(Arc<PausedStore>);
+
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.release();
+        }
+    }
+
     struct PlainVerifier;
 
     impl PinVerifier for PlainVerifier {
@@ -311,14 +321,6 @@ mod tests {
             policy: Policy::from_config(&config),
         });
         let app = router(Arc::new(AppState::with_service(config, service)));
-        // Opens the gate however the test ends, so a failed assertion can't leave a blocking
-        // thread waiting forever and hang the runtime's shutdown.
-        struct Release(Arc<PausedStore>);
-        impl Drop for Release {
-            fn drop(&mut self) {
-                self.0.release();
-            }
-        }
         let _release = Release(Arc::clone(&store));
 
         // The first create reaches its insert, then the client goes away.
