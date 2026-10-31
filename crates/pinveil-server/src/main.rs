@@ -15,6 +15,14 @@ async fn main() -> ExitCode {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    if std::env::args().skip(1).eq(["--version"]) {
+        println!(
+            "pinveil-server {} (protocol {})",
+            env!("CARGO_PKG_VERSION"),
+            pinveil_core::PROTOCOL_VERSION
+        );
+        return ExitCode::SUCCESS;
+    }
     let (config, warnings) = match config::load(&Sources::from_process()) {
         Ok(loaded) => loaded,
         Err(error) => {

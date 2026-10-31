@@ -166,3 +166,18 @@ async fn cfg_validate_refuses_to_start_and_warns() {
         server.stderr()
     );
 }
+
+#[tokio::test]
+async fn rel_smoke_server_version() {
+    let output = tokio::process::Command::new(crate::harness::BIN)
+        .arg("--version")
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text.trim(),
+        format!("pinveil-server {} (protocol 2)", env!("CARGO_PKG_VERSION"))
+    );
+}
