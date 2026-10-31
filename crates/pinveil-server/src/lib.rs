@@ -7,6 +7,9 @@ pub mod app;
 pub mod assets;
 pub mod config;
 pub mod error;
+pub mod pin;
+pub mod service;
+pub mod store;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
