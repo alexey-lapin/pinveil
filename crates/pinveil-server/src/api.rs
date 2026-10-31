@@ -86,13 +86,21 @@ async fn create(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.to_ascii_lowercase().starts_with("multipart/form-data"));
     if !is_multipart {
+        // Read the (size-capped) body before answering. Answering with body bytes still
+        // unread makes the server close the connection, and some clients (Windows in
+        // particular) then see a reset instead of the response.
+        let limit = state.config.messages.max_payload_bytes + MULTIPART_OVERHEAD_BYTES;
+        let _ = axum::body::to_bytes(request.into_body(), limit).await;
         return Err(ApiError::UnsupportedMediaType);
     }
     let mut multipart = Multipart::from_request(request, &state)
         .await
         .map_err(|_| ApiError::BadRequest("Malformed multipart body"))?;
 
+    // Read every part before deciding, for the same reason: a duplicate or unexpected part
+    // is remembered and reported once the whole body has been consumed.
     let (mut blob, mut pin, mut ttl) = (None, None, None);
+    let mut problem = None;
     while let Some(field) = multipart.next_field().await.map_err(multipart_error)? {
         let name = field.name().unwrap_or_default().to_owned();
         let slot_taken = match name.as_str() {
@@ -106,14 +114,17 @@ async fn create(
                 .replace(field.text().await.map_err(multipart_error)?)
                 .is_some(),
             _ => {
-                return Err(ApiError::BadRequest(
-                    "Unexpected part; expected blob, pin, and ttl",
-                ));
+                field.bytes().await.map_err(multipart_error)?;
+                problem.get_or_insert("Unexpected part; expected blob, pin, and ttl");
+                false
             }
         };
         if slot_taken {
-            return Err(ApiError::BadRequest("A part was sent twice"));
+            problem.get_or_insert("A part was sent twice");
         }
+    }
+    if let Some(problem) = problem {
+        return Err(ApiError::BadRequest(problem));
     }
     let (Some(blob), Some(pin), Some(ttl)) = (blob, pin, ttl) else {
         return Err(ApiError::BadRequest(
