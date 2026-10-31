@@ -104,28 +104,47 @@ struct FileJson {
     byte_length: u64,
 }
 
-fn manifest_of(payload: &Payload) -> ManifestJson {
+/// A file described without its data, for measuring a message before reading any file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileMeta {
+    pub name: String,
+    pub mime_type: String,
+    pub byte_length: u64,
+}
+
+fn metas_of(payload: &Payload) -> Vec<FileMeta> {
+    payload
+        .files
+        .iter()
+        .map(|file| FileMeta {
+            name: file.name.clone(),
+            mime_type: file.mime_type.clone(),
+            byte_length: file.data.len() as u64,
+        })
+        .collect()
+}
+
+fn manifest_of(text: Option<&str>, files: &[FileMeta]) -> ManifestJson {
     ManifestJson {
-        text: payload.text.as_ref().map(|text| TextJson {
+        text: text.map(|text| TextJson {
             byte_length: text.len() as u64,
         }),
-        files: payload
-            .files
+        files: files
             .iter()
             .map(|file| FileJson {
                 name: file.name.clone(),
                 mime_type: file.mime_type.clone(),
-                byte_length: file.data.len() as u64,
+                byte_length: file.byte_length,
             })
             .collect(),
     }
 }
 
-fn check_entries(payload: &Payload) -> Result<(), PayloadError> {
-    if payload.text.as_deref().is_none_or(str::is_empty) && payload.files.is_empty() {
+fn check_entries(text: Option<&str>, files: &[FileMeta]) -> Result<(), PayloadError> {
+    if text.is_none_or(str::is_empty) && files.is_empty() {
         return Err(PayloadError::Empty);
     }
-    for file in &payload.files {
+    for file in files {
         if !(1..=MAX_NAME_BYTES).contains(&file.name.len()) {
             return Err(PayloadError::BadName);
         }
@@ -136,20 +155,45 @@ fn check_entries(payload: &Payload) -> Result<(), PayloadError> {
     Ok(())
 }
 
+/// The checks shared by [`measure_payload`] and [`encode_payload`]. Returns the manifest.
+fn prepare(
+    text: Option<&str>,
+    files: &[FileMeta],
+    limits: CreationLimits,
+) -> Result<Zeroizing<Vec<u8>>, PayloadError> {
+    check_entries(text, files)?;
+    if files.len() > limits.max_files {
+        return Err(PayloadError::TooManyFiles);
+    }
+    let manifest =
+        Zeroizing::new(serde_json::to_vec(&manifest_of(text, files)).expect("manifest serializes"));
+    if manifest.len() > limits.max_manifest_bytes {
+        return Err(PayloadError::ManifestTooLarge);
+    }
+    Ok(manifest)
+}
+
+/// Runs every [`encode_payload`] check on a message described without its file data, and
+/// returns the encoded length. Clients use it to refuse an oversized message before reading
+/// any file. Saturates instead of overflowing on absurd declared sizes.
+pub fn measure_payload(
+    text: Option<&str>,
+    files: &[FileMeta],
+    limits: CreationLimits,
+) -> Result<u64, PayloadError> {
+    let manifest = prepare(text, files, limits)?;
+    Ok(files.iter().fold(
+        4 + manifest.len() as u64 + text.map_or(0, |t| t.len() as u64),
+        |sum, file| sum.saturating_add(file.byte_length),
+    ))
+}
+
 /// Encodes a payload for sealing, enforcing `limits`.
 pub fn encode_payload(
     payload: &Payload,
     limits: CreationLimits,
 ) -> Result<Zeroizing<Vec<u8>>, PayloadError> {
-    check_entries(payload)?;
-    if payload.files.len() > limits.max_files {
-        return Err(PayloadError::TooManyFiles);
-    }
-    let manifest =
-        Zeroizing::new(serde_json::to_vec(&manifest_of(payload)).expect("manifest serializes"));
-    if manifest.len() > limits.max_manifest_bytes {
-        return Err(PayloadError::ManifestTooLarge);
-    }
+    let manifest = prepare(payload.text.as_deref(), &metas_of(payload), limits)?;
     let body_len: usize = payload.text.as_ref().map_or(0, String::len)
         + payload.files.iter().map(|f| f.data.len()).sum::<usize>();
     let mut bytes = Zeroizing::new(Vec::with_capacity(4 + manifest.len() + body_len));
@@ -224,9 +268,12 @@ pub fn decode_payload(bytes: &[u8]) -> Result<Payload, PayloadError> {
         });
     }
     let payload = Payload { text, files };
-    check_entries(&payload)?;
-    let canonical =
-        Zeroizing::new(serde_json::to_vec(&manifest_of(&payload)).expect("manifest serializes"));
+    let metas = metas_of(&payload);
+    check_entries(payload.text.as_deref(), &metas)?;
+    let canonical = Zeroizing::new(
+        serde_json::to_vec(&manifest_of(payload.text.as_deref(), &metas))
+            .expect("manifest serializes"),
+    );
     if canonical.as_slice() != manifest_bytes {
         return Err(PayloadError::NotCanonical);
     }
@@ -235,7 +282,10 @@ pub fn decode_payload(bytes: &[u8]) -> Result<Payload, PayloadError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreationLimits, FileEntry, Payload, PayloadError, decode_payload, encode_payload};
+    use super::{
+        CreationLimits, FileEntry, FileMeta, Payload, PayloadError, decode_payload, encode_payload,
+        measure_payload,
+    };
     use crate::protocol::{MAX_FILES_CEILING, MAX_MANIFEST_BYTES_CEILING};
 
     fn file(name: &str, data: &[u8]) -> FileEntry {
@@ -484,5 +534,52 @@ mod tests {
                 proptest::prop_assert_eq!(decode_payload(&bytes).unwrap(), payload);
             }
         }
+    }
+
+    #[test]
+    fn cli_send_measure_matches_encoded_length_without_file_data() {
+        let meta = |f: &FileEntry| FileMeta {
+            name: f.name.clone(),
+            mime_type: f.mime_type.clone(),
+            byte_length: f.data.len() as u64,
+        };
+        for payload in [
+            Payload {
+                text: Some("hello".into()),
+                files: vec![],
+            },
+            Payload {
+                text: None,
+                files: vec![file("a.txt", b"abc"), file("\u{fc}n\u{ef}.bin", b"")],
+            },
+            Payload {
+                text: Some(String::new()),
+                files: vec![file("b", b"1234567890")],
+            },
+        ] {
+            let metas: Vec<FileMeta> = payload.files.iter().map(meta).collect();
+            let measured =
+                measure_payload(payload.text.as_deref(), &metas, CreationLimits::CEILINGS).unwrap();
+            let encoded = encode_payload(&payload, CreationLimits::CEILINGS).unwrap();
+            assert_eq!(measured, encoded.len() as u64);
+        }
+        let one = CreationLimits::new(1, MAX_MANIFEST_BYTES_CEILING).unwrap();
+        let two = [meta(&file("a", b"")), meta(&file("b", b""))];
+        assert_eq!(
+            measure_payload(None, &two, one),
+            Err(PayloadError::TooManyFiles)
+        );
+        assert_eq!(
+            measure_payload(Some(""), &[], CreationLimits::CEILINGS),
+            Err(PayloadError::Empty)
+        );
+        let huge = [FileMeta {
+            byte_length: u64::MAX,
+            ..meta(&file("h", b""))
+        }];
+        assert_eq!(
+            measure_payload(None, &huge, CreationLimits::CEILINGS),
+            Ok(u64::MAX)
+        );
     }
 }
