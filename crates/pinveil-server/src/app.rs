@@ -15,6 +15,7 @@ use crate::assets::{self, INDEX_HTML, MESSAGE_HTML};
 use crate::config::{Config, ttl_label};
 use crate::error::{ApiError, error_response, message_for_status};
 use crate::pin::Argon2Verifier;
+use crate::ratelimit::RateLimiter;
 use crate::service::{HashPool, Parts, Policy, Service, SystemClock, WordIds};
 use crate::store::MemoryStore;
 use pinveil_core::wordlist::Wordlist;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub service: Arc<Service>,
     /// Bounds create requests whose bodies are in flight (`server.max_concurrent_uploads`).
     pub uploads: Semaphore,
+    pub limiter: RateLimiter,
     /// The client config as script-safe JSON, built once at startup.
     client_config_json: String,
     /// `index.html` with the client config filled in.
@@ -65,10 +67,12 @@ impl AppState {
         let client_config_json = assets::script_safe_json(&json);
         let index_html = INDEX_HTML.replace("{{client_config_json}}", &client_config_json);
         let uploads = Semaphore::new(config.max_concurrent_uploads);
+        let limiter = RateLimiter::new(&config.rate_limit);
         Self {
             config,
             service,
             uploads,
+            limiter,
             client_config_json,
             index_html,
         }
@@ -129,7 +133,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/message/{id}", get(message_page))
         .route("/static/{file}", get(static_file))
         .route("/api/config", get(api_config))
-        .merge(crate::api::routes(state.config.messages.max_payload_bytes))
+        .merge(crate::api::routes(&state))
         .fallback(|| async { ApiError::NotFound })
         .method_not_allowed_fallback(|| async {
             error_response(StatusCode::METHOD_NOT_ALLOWED, "Method not allowed")

@@ -4,4 +4,5 @@
 
 mod harness;
 mod messages;
+mod ratelimit;
 mod web;

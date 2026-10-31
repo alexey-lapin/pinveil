@@ -3,8 +3,12 @@
 use std::sync::Arc;
 
 use axum::extract::multipart::MultipartError;
-use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Request, State};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::time::Instant;
+
+use axum::extract::{ConnectInfo, DefaultBodyLimit, FromRequest, Multipart, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,20 +16,53 @@ use serde::Serialize;
 
 use crate::app::AppState;
 use crate::error::ApiError;
+use crate::ratelimit::{Bucket, client_address};
 
 /// Room for the multipart framing and the `pin` and `ttl` parts on top of the blob itself.
 pub const MULTIPART_OVERHEAD_BYTES: usize = 64 * 1024;
 
-/// API routes, merged into the application router.
-pub fn routes(max_payload_bytes: usize) -> Router<Arc<AppState>> {
+/// API routes, merged into the application router. Each route counts against its rate-limit
+/// bucket before anything else runs.
+pub fn routes(state: &Arc<AppState>) -> Router<Arc<AppState>> {
+    let body_limit = state.config.messages.max_payload_bytes + MULTIPART_OVERHEAD_BYTES;
+    let limited = |bucket| middleware::from_fn_with_state((Arc::clone(state), bucket), rate_limit);
     Router::new()
         .route(
             "/api/messages",
-            post(create).layer(DefaultBodyLimit::max(
-                max_payload_bytes + MULTIPART_OVERHEAD_BYTES,
-            )),
+            post(create)
+                .layer(DefaultBodyLimit::max(body_limit))
+                .layer(limited(Bucket::Create)),
         )
-        .route("/api/messages/{id}/retrieve", get(retrieve))
+        .route(
+            "/api/messages/{id}/retrieve",
+            get(retrieve).layer(limited(Bucket::Retrieve)),
+        )
+}
+
+async fn rate_limit(
+    State((state, bucket)): State<(Arc<AppState>, Bucket)>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |info| info.0.ip());
+    let values: Option<Vec<&str>> = request
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .map(|v| v.to_str().ok())
+        .collect();
+    // A non-UTF-8 value counts as malformed, which falls back to the peer address.
+    let client = match values {
+        Some(values) => client_address(peer, &values, &state.config.trusted_proxies),
+        None => peer,
+    };
+    if !state.limiter.allow(bucket, client, Instant::now()) {
+        return ApiError::RateLimited.into_response();
+    }
+    next.run(request).await
 }
 
 #[derive(Serialize)]

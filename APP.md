@@ -359,8 +359,8 @@ Multiple server instances remain out of scope in both modes.
 
 - Fixed window, counted per client address and per bucket. It applies to `/api/messages/**` only. Pages, static files, and `/api/config` are not limited.
 - POST requests use the `create` bucket (10 per minute), GET requests use the `retrieve` bucket (30 per minute).
-- The client address is the socket peer address, unless that peer is in `trusted_proxies` (empty by default). For a trusted peer, the server reads only `X-Forwarded-For` (`Forwarded` is ignored). It walks the list from the right, skipping addresses that are themselves trusted proxies, and takes the first untrusted address. That way a fake left-most entry such as `spoofed, real-client` can't pick the bucket. A missing, malformed, or over-long header (the parser is bounded) falls back to the peer address.
-- Limiter state is bounded: a cap on tracked keys plus eviction, with cleanup work bounded per request.
+- The client address is the socket peer address, unless that peer is in `trusted_proxies` (empty by default). For a trusted peer, the server reads only `X-Forwarded-For` (`Forwarded` is ignored). It walks the list from the right, skipping addresses that are themselves trusted proxies, and takes the first untrusted address. That way a fake left-most entry such as `spoofed, real-client` can't pick the bucket. A missing, malformed, or over-long header (more than 1024 bytes or 32 addresses), more than one `X-Forwarded-For` header, or a chain made only of trusted proxies falls back to the peer address.
+- Limiter state is bounded: at most `max_tracked_keys` counters, expired counters leave in window order (amortized constant work per request), and at the cap new addresses get 429 instead of evicting live counters.
 
 ## Configuration
 

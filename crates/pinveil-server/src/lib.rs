@@ -8,6 +8,7 @@ pub mod assets;
 pub mod config;
 pub mod error;
 pub mod pin;
+pub mod ratelimit;
 pub mod service;
 pub mod store;
 
