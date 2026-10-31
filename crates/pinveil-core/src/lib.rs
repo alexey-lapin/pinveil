@@ -6,6 +6,7 @@
 pub mod entropy;
 pub mod envelope;
 pub mod generate;
+pub mod payload;
 pub mod protocol;
 pub mod wordlist;
 
