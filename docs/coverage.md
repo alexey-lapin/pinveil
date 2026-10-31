@@ -12,7 +12,9 @@ Status values:
 - `accepted`: a documented tradeoff, asserted by a test instead of fixed.
 
 A step isn't done until each row it owns reads `covered` or `accepted`. Test ids are
-`<area>.<case>`. The test name in code contains the id, so `grep` finds it.
+`<area>.<case>`. JS test titles contain the id as written (`INV-14.kdf-range ...`). Rust test
+functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`), so
+`grep -ri 'inv.14'` finds both.
 
 ## Harness probes (Phase 0)
 
@@ -31,7 +33,7 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 | INV-1 | Plaintext, names, and MIME types never leave a client unencrypted. The passphrase never reaches the server. The PIN does, over TLS, and only its verifier is stored. The only TLS exception is `--insecure-http` to loopback. | P1.5, P2.4, P3.4, P4.3, P4.9 | `INV-1.browser-request-capture`, `INV-1.cli-request-capture`, `INV-1.no-raw-pin-stored`, `INV-1.insecure-http-loopback-only` | planned |
 | INV-2 | The fragment is never sent, logged, or put in errors | P3.4, P4.1, P4.3, P4.9 | `INV-2.browser-requests`, `INV-2.cli-requests`, `INV-2.cli-error-redaction`, `INV-2.parser-diagnostics-redacted` | planned |
 | INV-3 | The server treats blobs as opaque bytes | P2.5 | `INV-3.arbitrary-bytes-roundtrip`, `INV-3.no-format-inspection` | planned |
-| INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | `INV-4.wrong-pin-fails`, `INV-4.wrong-passphrase-fails`, `INV-4.vectors` | planned |
+| INV-4 | The key needs both the passphrase and the PIN | P1.5, P1.7 | core `inv_4_round_trip_needs_both_inputs`; JS `INV-4 round trip ...`; vectors `decrypt: wrong PIN`, `decrypt: wrong passphrase` | local (macOS; CI pending) |
 | INV-5 | The PIN is stored only as a salted, peppered Argon2id hash | P2.4, P5.1 | `INV-5.verifier-composition`, `INV-5.salt-16-bytes`, `INV-5.params-applied`, `INV-5.sqlite-row-has-no-pin` | planned |
 | INV-6 | At-most-once: the consume commits before the response, and a failed commit sends no blob | P2.6, P5.4 | `INV-6.parallel-same-id`, `INV-6.commit-failure-no-bytes`, `INV-6.sqlite-restart-no-resurrection` | planned |
 | INV-7 | Wrong attempts and the burn commit before the response | P2.6, P5.4 | `INV-7.burn-sequence`, `INV-7.concurrent-attempts`, `INV-7.sqlite-attempts-survive-restart` | planned |
@@ -39,9 +41,9 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 | INV-9 | One identical 404 for every gone state | P2.6 | `INV-9.unknown-expired-burned-consumed-equal` | planned |
 | INV-10 | The store mode is disclosed, and restart behavior matches it | P2.2, P3.1, P3.2, P4.4, P4.5, P5.4 | `INV-10.config-store-mode`, `INV-10.browser-notice`, `INV-10.cli-notice`, `INV-10.memory-restart-loses`, `INV-10.sqlite-restart-keeps` | planned |
 | INV-11 | Same-origin assets only, no third-party code | P2.2, P3.4 | `INV-11.request-origins`, `INV-11.csp-header` | planned |
-| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | planned |
+| INV-12 | Passphrase generation fails closed on a bad wordlist | P1.1, P3.4 | `INV-12.embedded-invalid-refused`, `INV-12.js-http-404`, `INV-12.js-truncated`, `INV-12.js-duplicates` | local for P1.1 (core and JS validation); P3.4 (real page) pending |
 | INV-13 | One JSON error shape on every rejection | P2.2, P2.5, P2.6 | `INV-13.unknown-route`, `INV-13.wrong-method`, `INV-13.media-type`, `INV-13.missing-header`, `INV-13.missing-part`, `INV-13.duplicate-part`, `INV-13.malformed-multipart`, `INV-13.oversize`, `INV-13.static-errors` | planned |
-| INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | `INV-14.bad-header-before-kdf`, `INV-14.kdf-range`, `INV-14.bad-manifest-before-output`, `INV-14.tamper-before-render` | planned |
+| INV-14 | Two-stage validation: the header before the KDF, the manifest before any output | P1.3, P1.4, P1.5, P1.7 | core `inv_14_*` (envelope, payload, crypto); JS `INV-14.*`; vectors `fmt_vectors_js_made_negative_refused_at_stage` (header refusals under 100 ms, so no KDF ran) | local (macOS; CI pending) |
 
 ## HTTP interface
 
@@ -58,7 +60,7 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 
 | Id | Rule | Owner | Status |
 |---|---|---|---|
-| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | planned |
+| SRV-ids | Id format, CSPRNG, the 10-collision limit (id-source seam) | P1.2, P2.3 | local for P1.2 (format, CSPRNG); P2.3 (collision limit) pending |
 | SRV-caps | Atomic count and byte caps under concurrent creates | P2.3, P5.3 | planned |
 | SRV-serialize | Same id serialized, different ids concurrent (barrier verifier) | P2.6 | planned |
 | SRV-hash-pool | Permit limit, queue limit (503), memory budget, 13-hash default | P2.1, P2.7 | planned |
@@ -91,12 +93,12 @@ A step isn't done until each row it owns reads `covered` or `accepted`. Test ids
 
 | Id | Rule | Owner | Status |
 |---|---|---|---|
-| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | planned |
-| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | planned |
-| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | planned |
-| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | planned |
-| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | planned |
-| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | planned |
+| FMT-outer | Envelope v2: framing, header fields, exact size computation | P1.3 | local (macOS; CI pending) |
+| FMT-inner | Manifest: text and files, ceilings vs creation limits, 255-byte names, exact consumption | P1.4 | local (macOS; CI pending) |
+| FMT-fuzz | Random bytes never panic or read out of bounds | P1.3, P1.4 | local (macOS; CI pending) |
+| FMT-vectors | JS and Rust vectors in both directions, negative vectors rejected by both | P1.7 | local (macOS; CI pending) |
+| GEN-pin | PIN uniform and zero-padded, rejection-sampling boundaries, entropy failure aborts | P1.2 | local (macOS; CI pending) |
+| GEN-passphrase | Unbiased sampling from the validated list | P1.2 | local (macOS; CI pending) |
 
 ## Web UI
 
