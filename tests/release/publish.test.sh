@@ -147,8 +147,9 @@ ok "tag-image sets the version, minor, and latest tags, then is a no-op"
 
 reset image-prerelease
 "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.3.0-rc.1 true
-[ -f "$FAKE/tags/1.3.0-rc.1" ] && [ ! -f "$FAKE/tags/latest" ] && [ ! -f "$FAKE/tags/1.3" ] ||
+if [ ! -f "$FAKE/tags/1.3.0-rc.1" ] || [ -f "$FAKE/tags/latest" ] || [ -f "$FAKE/tags/1.3" ]; then
   fail "a prerelease moved a stable tag"
+fi
 ok "tag-image never moves stable tags for a prerelease"
 
 reset image-partial
@@ -179,7 +180,9 @@ reset image-older
 printf 'v1.2.0\nv1.3.0\n' >"$FAKE/stable"
 "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false
 summary_has "skipped: ghcr.io/x/pinveil:latest stays on newer 1.3.0"
-[ ! -f "$FAKE/tags/latest" ] && [ -f "$FAKE/tags/1.2" ] || fail "an old retry moved latest, or lost its minor tag"
+if [ -f "$FAKE/tags/latest" ] || [ ! -f "$FAKE/tags/1.2" ]; then
+  fail "an old retry moved latest, or lost its minor tag"
+fi
 printf 'v1.2.0\nv1.2.5\nv1.3.0\n' >"$FAKE/stable"
 rm -f "$FAKE/tags/1.2"
 "$publish" tag-image ghcr.io/x/pinveil "$digest" 1.2.0 false
