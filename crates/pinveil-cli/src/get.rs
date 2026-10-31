@@ -69,7 +69,7 @@ pub fn run(args: &GetArgs) -> Result<(), CliError> {
         write_text(text, args.raw)?;
     }
     if !payload.files.is_empty() {
-        let written = output::save(&payload.files, out, args.force, ask_collision)?;
+        let written = output::save(&payload.files, &out, args.force, ask_collision)?;
         for path in written {
             eprintln!("Saved {}", path.display());
         }

@@ -1250,6 +1250,7 @@ dependencies = [
  "libc",
  "mime_guess",
  "pinveil-core",
+ "pinveil-fs",
  "pinveil-server",
  "reqwest",
  "rpassword",
@@ -1279,6 +1280,15 @@ dependencies = [
  "sha2",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "pinveil-fs"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
