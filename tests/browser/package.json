@@ -1,0 +1,15 @@
+{
+  "name": "pinveil-browser-tests",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only Playwright tests for the web UI against a real pinveil-server. Nothing here is served.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

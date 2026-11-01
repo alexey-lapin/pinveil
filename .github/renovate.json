@@ -1,9 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
-    "schedule:daily",
-    ":semanticPrefixChore",
-    ":label(chore)"
+    "config:recommended",
+    ":semanticCommitsDisabled"
+  ],
+  "schedule": ["before 9am on monday"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "groupName": "rust crates"
+    },
+    {
+      "matchManagers": ["npm"],
+      "groupName": "test tooling (npm)"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
   ]
 }

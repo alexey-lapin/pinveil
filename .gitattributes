@@ -1,0 +1,4 @@
+# Byte-exact files: the embedded wordlist and the cross-client test vectors must not get
+# CRLF line endings on Windows checkouts.
+assets/eff_large_wordlist.txt -text
+tests/vectors/** -text

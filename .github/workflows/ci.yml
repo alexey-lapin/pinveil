@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  # Native runners for every release platform. Clippy runs here too, so code behind
+  # cfg(windows) / cfg(unix) is linted on the platform that compiles it.
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      # The same contract suite with the SQLite store registered for every test.
+      - name: Contract suite on SQLite
+        env:
+          PINVEIL_CONTRACT_STORE: sqlite
+        run: cargo test --locked -p pinveil-server --test contract
+
+  # The Linux release binaries are musl builds; build and run the whole suite against them.
+  test-musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Test
+        run: cargo test --workspace --locked --target ${{ matrix.target }}
+
+      - name: Contract suite on SQLite
+        env:
+          PINVEIL_CONTRACT_STORE: sqlite
+        run: cargo test --locked -p pinveil-server --test contract --target ${{ matrix.target }}
+
+  js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/js
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # zip.test.js checks the browser zip writer with independent readers.
+      - name: Install zip readers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 unzip
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+  # The release publish logic, against fake gh and docker and local Git repositories.
+  release-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Lint the release scripts
+        run: shellcheck packaging/*.sh tests/release/*.sh
+
+      - name: Publish logic tests
+        run: tests/release/publish.test.sh
+
+      - name: Packaging tests
+        run: tests/release/package.test.sh
+
+  # Playwright against a real pinveil-server, including browser <-> CLI round trips with
+  # the CLI built for each release target. All three engines run on Linux x86_64; the other
+  # targets run the suite in Chromium.
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cli-target: x86_64-unknown-linux-musl
+            browsers: chromium firefox webkit
+            projects: ""
+          - os: ubuntu-24.04-arm
+            cli-target: aarch64-unknown-linux-musl
+            browsers: chromium
+            projects: --project=chromium
+          - os: macos-latest
+            cli-target: ""
+            browsers: chromium
+            projects: --project=chromium
+          - os: windows-latest
+            cli-target: ""
+            browsers: chromium
+            projects: --project=chromium
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install musl toolchain
+        if: matrix.cli-target != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools python3
+          rustup target add ${{ matrix.cli-target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: browser-${{ matrix.cli-target }}
+
+      - name: Build server, CLI, and terminal helper
+        env:
+          EXE: ${{ runner.os == 'Windows' && '.exe' || '' }}
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          cargo build --locked -p pinveil-server -p pty-probe
+          if [ -n "${{ matrix.cli-target }}" ]; then
+            cargo build --locked -p pinveil-cli --target ${{ matrix.cli-target }}
+            cli="$WORKSPACE/target/${{ matrix.cli-target }}/debug/pinveil"
+          else
+            cargo build --locked -p pinveil-cli
+            cli="$WORKSPACE/target/debug/pinveil$EXE"
+          fi
+          {
+            echo "PINVEIL_SERVER_BIN=$WORKSPACE/target/debug/pinveil-server$EXE"
+            echo "PINVEIL_CLI_BIN=$cli"
+            echo "PINVEIL_TTY_RUN_BIN=$WORKSPACE/target/debug/tty-run$EXE"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install
+        working-directory: tests/browser
+        run: |
+          npm ci
+          npx playwright install --with-deps ${{ matrix.browsers }}
+
+      - name: Test
+        working-directory: tests/browser
+        run: npm test -- ${{ matrix.projects }}
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-results-${{ matrix.os }}
+          path: tests/browser/test-results
+          retention-days: 7

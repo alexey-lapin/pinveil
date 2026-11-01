@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pinveil - Zero-knowledge sharing</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="create">
+<script id="app-config" type="application/json">{{client_config_json}}</script>
+<main class="shell shell-create">
+    <section class="create-stage">
+        <form id="create-form" class="card form-card create-panel" novalidate>
+            <div id="create-inputs">
+                <div class="form-header">
+                    <h2>Create a secure link</h2>
+                </div>
+                <p class="notice" id="store-notice"></p>
+
+                <label class="field">
+                    <span>Secret text</span>
+                    <textarea id="message-text" rows="6" placeholder="A note, a key, or anything else that should be read once. Optional if you add files."></textarea>
+                </label>
+
+                <div class="field">
+                    <span id="files-label">Files</span>
+                    <div class="file-drop" id="file-drop">
+                        <input id="message-files" type="file" multiple class="file-input-hidden" aria-labelledby="files-label">
+                        <div class="file-drop-idle">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                            <p>Drop files here or <strong>browse</strong></p>
+                            <small id="file-limits"></small>
+                        </div>
+                    </div>
+                    <ul class="file-list" id="file-list"></ul>
+                </div>
+
+                <div class="grid two-up">
+                    <div class="field">
+                        <span><label for="pin">Six-digit PIN</label></span>
+                        <div class="inline-input">
+                            <input id="pin" inputmode="numeric" autocomplete="off" maxlength="6" spellcheck="false">
+                            <button class="secondary-action" type="button" id="new-pin-button">New PIN</button>
+                        </div>
+                        <small>Generated for you. You can type your own.</small>
+                    </div>
+
+                    <label class="field">
+                        <span>Expires after</span>
+                        <select id="ttl-preset"></select>
+                    </label>
+                </div>
+
+                <label class="field hidden" id="custom-ttl-field">
+                    <span>Custom expiry in minutes</span>
+                    <input id="custom-ttl-minutes" type="number" step="1" inputmode="numeric">
+                    <small id="custom-ttl-range"></small>
+                </label>
+
+                <div class="status-row">
+                    <button class="primary-action" id="submit-button" type="submit">Generate secure link</button>
+                    <p class="inline-note">Your text, files, and file names are encrypted in this browser. The server sees only ciphertext and the PIN.</p>
+                </div>
+            </div>
+
+            <div id="create-status" class="feedback" aria-live="polite"></div>
+
+            <div class="result-ready hidden" id="result-ready">
+                <div class="result-header">
+                    <p class="eyebrow">Link ready</p>
+                    <h2>Send these over two different channels</h2>
+                </div>
+                <p class="notice notice-warning">Anyone who has both the link and the PIN can open the message once. Send the link and the PIN separately, for example the link by email and the PIN by chat.</p>
+
+                <label class="field compact">
+                    <span>Secure link</span>
+                    <textarea id="share-url" rows="3" readonly></textarea>
+                </label>
+                <div class="action-row">
+                    <button class="secondary-action" type="button" id="copy-url-button">Copy link</button>
+                </div>
+
+                <label class="field compact">
+                    <span>PIN</span>
+                    <input id="share-pin" readonly>
+                </label>
+                <div class="action-row">
+                    <button class="secondary-action" type="button" id="copy-pin-button">Copy PIN</button>
+                    <span id="expiry-label" class="inline-note"></span>
+                </div>
+
+                <p class="notice" id="result-store-notice"></p>
+                <div class="action-row">
+                    <button class="primary-action" type="button" id="create-another-button">Create another</button>
+                </div>
+            </div>
+        </form>
+    </section>
+    <noscript><p class="card feedback error visible">This page needs JavaScript: encryption happens in your browser.</p></noscript>
+</main>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

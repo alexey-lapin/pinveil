@@ -1,0 +1,66 @@
+//! `pinveil-server` binary: loads configuration, then serves.
+
+use std::process::ExitCode;
+
+use pinveil_server::config::{self, Sources};
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    // Logs go to stderr; stdout carries only the "listening on" line.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("PINVEIL_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+    if std::env::args().skip(1).eq(["--version"]) {
+        println!(
+            "pinveil-server {} (protocol {})",
+            env!("CARGO_PKG_VERSION"),
+            pinveil_core::PROTOCOL_VERSION
+        );
+        return ExitCode::SUCCESS;
+    }
+    let (config, warnings) = match config::load(&Sources::from_process()) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            eprintln!("pinveil-server: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    for warning in warnings {
+        eprintln!("pinveil-server: warning: {}", warning.0);
+    }
+    let store = match pinveil_server::open_store(&config) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("pinveil-server: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let listener = match tokio::net::TcpListener::bind(config.listen).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "pinveil-server: cannot listen on {}: {error}",
+                config.listen
+            );
+            return ExitCode::from(1);
+        }
+    };
+    // Tests read this line to learn the port when started with `--listen 127.0.0.1:0`.
+    match listener.local_addr() {
+        Ok(addr) => println!("listening on {addr}"),
+        Err(error) => {
+            eprintln!("pinveil-server: {error}");
+            return ExitCode::from(1);
+        }
+    }
+    if let Err(error) = pinveil_server::serve(listener, config, store).await {
+        eprintln!("pinveil-server: {error}");
+        return ExitCode::from(1);
+    }
+    ExitCode::SUCCESS
+}

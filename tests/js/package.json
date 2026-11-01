@@ -1,0 +1,12 @@
+{
+  "name": "pinveil-js-tests",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only test runner for the browser modules in web/static. Nothing here is served or bundled.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

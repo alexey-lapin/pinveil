@@ -1,0 +1,77 @@
+name: Release (dispatch)
+
+# Manual entry point for a release. The version is the workspace version in Cargo.toml on
+# the dispatched branch (the binaries print it, so the tag must match it): bump it in a
+# pull request first, including a prerelease suffix such as 0.1.0-rc.1 for a candidate.
+# This job creates and pushes the tag, then calls the reusable release workflow.
+#
+# Pushing the tag with the default GITHUB_TOKEN does not re-trigger release.yml's
+# `on: push: tags` (GitHub blocks workflow runs from GITHUB_TOKEN pushes), so the release
+# runs exactly once, through the explicit workflow_call below.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags, to refuse an existing one
+
+      - name: Resolve the tag from Cargo.toml
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Cargo.toml version '$version' is not X.Y.Z[-pre]" >&2; exit 1 ;;
+          esac
+          if [ "$version" = 0.0.0 ]; then
+            echo "Cargo.toml still says 0.0.0; bump the workspace version first" >&2
+            exit 1
+          fi
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists; bump the version in Cargo.toml" >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "tag $tag already exists; bump the version in Cargo.toml" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: $tag"
+
+      - name: Create and push the tag
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG" # a GITHUB_TOKEN push: does not trigger release.yml
+
+  release:
+    needs: tag
+    # A reusable-workflow call caps the nested jobs' permissions at what this caller
+    # grants, so grant what release.yml's staging and publishing jobs need.
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit

@@ -1,0 +1,438 @@
+name: Release
+
+# Build, then test, then stage, then publish (implementation plan, Phase 6).
+#
+# Entry points:
+#   - push a v*.*.* tag (vX.Y.Z or a prerelease such as vX.Y.Z-rc.1),
+#   - release-dispatch.yml calls this with `tag` after creating it,
+#   - pull requests and pushes to feature branches that touch release files run
+#     everything up to the tests as a dry run: nothing is staged or published.
+#
+# A prerelease (a tag with a `-` suffix) gets a prerelease GitHub release and a candidate
+# image tag only. It never touches `latest`, the stable image aliases, the Homebrew tap,
+# or the Scoop bucket. Any failed test blocks staging and publishing entirely.
+#
+# Secrets (publish job only):
+#   TAP_GITHUB_TOKEN    fine-grained PAT, Contents: read/write on alexey-lapin/homebrew-tap
+#   SCOOP_GITHUB_TOKEN  fine-grained PAT, Contents: read/write on alexey-lapin/scoop-bucket
+
+on:
+  push:
+    tags: ["v*.*.*"]
+    branches: ["feature/**"]
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-dispatch.yml"
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-dispatch.yml"
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to build (vX.Y.Z[-pre]); must already exist"
+        type: string
+        required: true
+    secrets:
+      TAP_GITHUB_TOKEN:
+        required: false
+      SCOOP_GITHUB_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE: ghcr.io/alexey-lapin/pinveil
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Plan
+        id: plan
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ -n "$INPUT_TAG" ]; then tag=$INPUT_TAG
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then tag=$GITHUB_REF_NAME
+          else tag=; fi
+          if [ -n "$tag" ]; then
+            version=${tag#v}
+            # The binaries print the workspace version, so a tag must match it exactly.
+            [ "$version" = "$crate" ] || { echo "tag $tag does not match Cargo.toml version $crate" >&2; exit 1; }
+            release=true
+            echo "ref=refs/tags/$tag" >> "$GITHUB_OUTPUT"
+          else
+            version=$crate
+            release=false
+            echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          fi
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+            echo "release=$release"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release plan"
+            echo "- version: \`$version\`"
+            echo "- prerelease: $prerelease"
+            echo "- stages and publishes: $release"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            musl: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            musl: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - name: Install musl toolchain
+        if: matrix.musl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      # A clean release build: no cache, so nothing from a test build can leak in.
+      - name: Build release binaries
+        run: cargo build --release --locked --target ${{ matrix.target }} -p pinveil-server -p pinveil-cli
+
+      - name: Package
+        id: package
+        run: |
+          # Two lines, cli=<path> and server=<path>: this target's two archives.
+          packaging/package.sh ${{ matrix.target }} ${{ needs.plan.outputs.version }} >> "$GITHUB_OUTPUT"
+
+      - name: Keep the Linux server binary for the image
+        if: matrix.musl
+        run: |
+          arch=$([ "${{ matrix.target }}" = x86_64-unknown-linux-musl ] && echo amd64 || echo arm64)
+          mkdir -p "image/dist/linux_$arch"
+          cp "target/${{ matrix.target }}/release/pinveil-server" "image/dist/linux_$arch/"
+          python3 packaging/third-party.py pinveil-server "${{ matrix.target }}" "image/dist/linux_$arch/THIRD-PARTY-NOTICES.txt"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.cli }}
+            ${{ steps.package.outputs.server }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.musl
+        with:
+          name: image-binary-${{ matrix.target }}
+          path: image/dist
+          if-no-files-found: error
+
+  checksums:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+
+      # The manifest every later step is keyed to: what was tested is what is staged and
+      # published, checked by these hashes.
+      - name: Checksums
+        run: |
+          cd dist
+          # Exactly a CLI and a server archive per target.
+          cli=(pinveil_*) server=(pinveil-server_*)
+          [ "${#cli[@]}" = 4 ] && [ "${#server[@]}" = 4 ]
+          sha256sum pinveil_* pinveil-server_* > checksums.txt
+          cat checksums.txt
+          { echo "### Artifacts"; echo '```'; cat checksums.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: checksums
+          path: dist/checksums.txt
+
+  smoke:
+    needs: [plan, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: archive-${{ matrix.target }}
+          path: staged
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-tty-run
+
+      # Test tooling only, never shipped: drives the CLI's hidden prompts.
+      - name: Build the terminal helper
+        run: cargo build --locked -p pty-probe --bin tty-run
+
+      - name: Smoke test, plain HTTP and HTTPS through a private CA
+        run: |
+          exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
+          packaging/smoke.sh staged/pinveil_* staged/pinveil-server_* ${{ needs.plan.outputs.version }} "target/debug/tty-run$exe" tls
+
+  container:
+    needs: [plan, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest-amd64: ${{ steps.push.outputs.digest-amd64 }}
+      digest-arm64: ${{ steps.push.outputs.digest-arm64 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-binary-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build the image from the release binary
+        run: |
+          docker build --platform linux/${{ matrix.arch }} -f packaging/Dockerfile \
+            -t pinveil-candidate:${{ matrix.arch }} .
+
+      - name: Container smoke test with a SQLite volume
+        run: packaging/container-smoke.sh pinveil-candidate:${{ matrix.arch }}
+
+      # Stage: the tested image itself is pushed, under an immutable candidate tag.
+      - name: Log in to GHCR
+        if: needs.plan.outputs.release == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the tested image
+        id: push
+        if: needs.plan.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          # Unique per run and attempt, so a re-run never re-points a candidate tag.
+          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}.${{ github.run_attempt }}-${{ matrix.arch }}"
+          docker tag pinveil-candidate:${{ matrix.arch }} "$candidate"
+          docker push "$candidate"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$candidate" | sed 's/.*@//')
+          echo "digest-${{ matrix.arch }}=$digest" >> "$GITHUB_OUTPUT"
+          echo "- image ${{ matrix.arch }}: \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  formula:
+    needs: [plan, checksums]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{archive-*,checksums}"
+          path: dist
+          merge-multiple: true
+
+      # The formula is rendered against the local archives and installed through a
+      # throwaway tap; the published one differs only in its URLs.
+      - name: brew install from a temporary formula
+        run: |
+          set -euo pipefail
+          python3 packaging/render-manifests.py ${{ needs.plan.outputs.version }} "file://$PWD/dist" dist/checksums.txt out
+          brew tap-new --no-git pinveil/staging
+          cp out/pinveil.rb "$(brew --repository pinveil/staging)/Formula/pinveil.rb"
+          brew install pinveil/staging/pinveil
+          brew test pinveil/staging/pinveil
+          # The formula installs the CLI and nothing else.
+          bin="$(brew --prefix pinveil/staging/pinveil)/bin"
+          [ "$(ls "$bin")" = pinveil ] || { echo "formula installed: $(ls "$bin")"; exit 1; }
+          "$bin/pinveil" --version
+          python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); a=m["architecture"]["64bit"]; assert a["bin"]==["pinveil.exe"], a; assert "/pinveil_" in a["url"], a' out/pinveil.json
+
+  stage:
+    needs: [plan, checksums, smoke, container, formula]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      manifest-digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{archive-*,checksums}"
+          path: dist
+          merge-multiple: true
+
+      # A draft gets this run's tested archives; an already published release is never
+      # replaced, only confirmed to be this same build (packaging/publish.sh).
+      - name: Draft release with the tested archives, verified by checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: packaging/publish.sh stage-release "${{ needs.plan.outputs.tag }}" "${{ needs.plan.outputs.prerelease }}" dist
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Multi-arch candidate image from the tested digests
+        id: image
+        run: |
+          set -euo pipefail
+          candidate="$IMAGE:candidate-${{ needs.plan.outputs.version }}-${{ github.run_id }}.${{ github.run_attempt }}"
+          docker buildx imagetools create -t "$candidate" \
+            "$IMAGE@${{ needs.container.outputs.digest-amd64 }}" \
+            "$IMAGE@${{ needs.container.outputs.digest-arm64 }}"
+          digest=$(docker buildx imagetools inspect "$candidate" --format '{{json .Manifest}}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["digest"])')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "- image index: \`$digest\` ($candidate)" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [plan, stage]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    # One publisher at a time, so stable channels are updated in order.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: checksums
+          path: dist
+
+      # Fixed order, each step idempotent and keyed to the tested checksums and digest;
+      # each destination's outcome goes to the job summary. A retry re-runs this job only
+      # and never rebuilds. Stable channels never move backwards (packaging/publish.sh).
+      - name: 1. Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: packaging/publish.sh publish-release "${{ needs.plan.outputs.tag }}"
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: 2. Tag the tested image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          packaging/publish.sh tag-image "$IMAGE" "${{ needs.stage.outputs.manifest-digest }}" \
+            "${{ needs.plan.outputs.version }}" "${{ needs.plan.outputs.prerelease }}"
+
+      - name: 3. Push the Homebrew formula and Scoop manifest
+        if: needs.plan.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          SCOOP_TOKEN: ${{ secrets.SCOOP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 packaging/render-manifests.py "$VERSION" \
+            "https://github.com/alexey-lapin/pinveil/releases/download/$TAG" dist/checksums.txt out
+          status=0
+          packaging/publish.sh push-manifest homebrew-tap "$TAP_TOKEN" out/pinveil.rb Formula/pinveil.rb "$TAG" "$VERSION" || status=1
+          packaging/publish.sh push-manifest scoop-bucket "$SCOOP_TOKEN" out/pinveil.json pinveil.json "$TAG" "$VERSION" || status=1
+          exit "$status"
+
+      - name: Report a partial publish
+        if: failure()
+        run: |
+          {
+            echo "### Publish did not finish"
+            echo "The lines above say, per destination, what is published, unchanged, skipped, refused, not published, or unknown. Steps after the failed one did not run, so their destinations are unchanged. Check any \"unknown\" by hand, then re-run this job: finished steps are no-ops."
+          } >> "$GITHUB_STEP_SUMMARY"
