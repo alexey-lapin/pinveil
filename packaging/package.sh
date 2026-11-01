@@ -25,9 +25,11 @@ esac
 root=$(cd "$(dirname "$0")/.." && pwd)
 python=$(command -v python3 || command -v python)
 
-# package <binary> <crate>: one archive; prints its path relative to the repository root.
+# package <key> <binary> <crate>: one archive; prints `<key>=<path>`, the path relative to
+# the repository root. Called directly, not in a command substitution, so any failing
+# command stops the script.
 package() {
-  local bin=$1 crate=$2
+  local key=$1 bin=$2 crate=$3
   local name="${bin}_${version}_${os}_${arch}"
   local stage="$root/dist/$name"
   rm -rf "$stage"
@@ -49,8 +51,8 @@ package() {
   rm -rf "$stage"
   # Relative: Git Bash on Windows prints /d/... absolute paths that other tools
   # (upload-artifact) can't resolve.
-  echo "dist/$name.$ext"
+  echo "$key=dist/$name.$ext"
 }
 
-echo "cli=$(package pinveil pinveil-cli)"
-echo "server=$(package pinveil-server pinveil-server)"
+package cli pinveil pinveil-cli
+package server pinveil-server pinveil-server

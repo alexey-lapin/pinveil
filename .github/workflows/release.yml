@@ -175,7 +175,8 @@ jobs:
         run: |
           cd dist
           # Exactly a CLI and a server archive per target.
-          [ "$(ls pinveil_* | wc -l)" = 4 ] && [ "$(ls pinveil-server_* | wc -l)" = 4 ]
+          cli=(pinveil_*) server=(pinveil-server_*)
+          [ "${#cli[@]}" = 4 ] && [ "${#server[@]}" = 4 ]
           sha256sum pinveil_* pinveil-server_* > checksums.txt
           cat checksums.txt
           { echo "### Artifacts"; echo '```'; cat checksums.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

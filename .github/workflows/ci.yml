@@ -213,3 +213,6 @@ jobs:
           name: playwright-results-${{ matrix.os }}
           path: tests/browser/test-results
           retention-days: 7
+
+      - name: Packaging tests
+        run: tests/release/package.test.sh
