@@ -1,7 +1,7 @@
 pinveil
-Copyright 2026 The pinveil Authors
+Copyright (c) 2026 Alexey Lapin
 
-Licensed under the Apache License, Version 2.0 (see LICENSE).
+pinveil is licensed under the MIT License (see LICENSE).
 
 This product embeds the EFF Large Wordlist for passphrases
 (assets/eff_large_wordlist.txt), published by the Electronic Frontier Foundation
@@ -10,4 +10,5 @@ Creative Commons Attribution 4.0 International License (CC BY 4.0) under EFF's
 copyright policy (https://www.eff.org/copyright). The server and the CLI embed it, and
 the browser fetches it from the server, to generate passphrases.
 
-Third-party Rust crates and their licenses are declared in Cargo.toml and Cargo.lock.
+The release archives and the container image also ship THIRD-PARTY-NOTICES.txt, with
+the license texts of every Rust crate linked into each binary.

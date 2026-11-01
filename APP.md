@@ -528,7 +528,7 @@ People self-host pinveil however they like. Each release, cut from a `v*.*.*` ta
 - a multi-arch server image at `ghcr.io/alexey-lapin/pinveil` (`<version>`, and for stable releases `<major>.<minor>` and `latest`), running as an unprivileged user with a writable `/data` for the SQLite store,
 - a Homebrew formula in `alexey-lapin/homebrew-tap` and a Scoop manifest in `alexey-lapin/scoop-bucket` that install the CLI from its prebuilt archives (stable releases only). The server is deployed from the image or its archive.
 
-pinveil is licensed under the Apache License 2.0; `NOTICE` credits the EFF wordlist (CC BY 4.0).
+pinveil is licensed under the MIT License; `NOTICE` credits the EFF wordlist (CC BY 4.0).
 
 Operators are responsible for:
 

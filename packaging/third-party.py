@@ -62,7 +62,7 @@ def header(binary, crates):
     lines = [
         f"Third-party software in {binary}",
         "",
-        "pinveil is licensed under the Apache License 2.0 (see LICENSE and NOTICE). This",
+        "pinveil is licensed under the MIT License (see LICENSE and NOTICE). This",
         "binary also contains the Rust crates listed below, linked statically"
         + (", including native\ncode some of them build and bundle:" if bundled else "."),
     ]

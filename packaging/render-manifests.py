@@ -41,7 +41,7 @@ class Pinveil < Formula
   desc "{DESCRIPTION}"
   homepage "{HOMEPAGE}"
   version "{version}"
-  license "Apache-2.0"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
@@ -80,7 +80,7 @@ end
             }
         },
         "homepage": HOMEPAGE,
-        "license": "Apache-2.0",
+        "license": "MIT",
         "description": DESCRIPTION,
     }
     out = pathlib.Path(out_dir)
