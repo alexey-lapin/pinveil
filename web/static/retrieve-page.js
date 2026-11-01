@@ -1,5 +1,4 @@
-import { LOST_IN_TRANSIT, OPEN_WARNING, openErrorText, retrieveErrorText, storeModeNotice } from "./compose.js";
-import { config } from "./config.js";
+import { LOST_IN_TRANSIT, OPEN_WARNING, openErrorText, retrieveErrorText } from "./compose.js";
 import { openPayload } from "./crypto.js";
 import { exportNames } from "./export-names.js";
 import { isValidPin } from "./random.js";
@@ -16,7 +15,6 @@ export function initRetrievePage() {
     const passphrase = window.location.hash.slice(1);
 
     $("open-warning").textContent = OPEN_WARNING;
-    $("store-notice").textContent = storeModeNotice(config.storeMode);
 
     if (!passphrase) {
         // Without the fragment nothing can be decrypted, so don't let the message be consumed.
@@ -56,6 +54,7 @@ export function initRetrievePage() {
 
         // A 200 means the server has deleted the message. Nothing after this point can be retried.
         form.classList.add("hidden");
+        $("retrieve-intro").classList.add("hidden");
         let blob;
         try {
             blob = new Uint8Array(await response.arrayBuffer());

@@ -154,12 +154,14 @@ test("WEB-create.pin-override is used and an invalid one is refused before uploa
     await expect(reader.locator("#message-output")).toHaveText("chosen");
 });
 
-test("WEB-create.copy-controls and the two-channel warning and store notice on the result", async ({ page, server }) => {
+test("WEB-create.copy-controls, the two-channel warning, and the store notice on the create page", async ({ page, server }) => {
     await page.goto(`${server.url}/`);
     await expect(page.locator("#store-notice")).toContainText("memory only");
     await createMessage(page, server, { text: "copy me" });
     await expect(page.locator("#result-ready")).toContainText("Send the link and the PIN separately");
-    await expect(page.locator("#result-store-notice")).toContainText("restart deletes every message");
+    // The store notice is in the footer, so it stays visible next to the result.
+    await expect(page.locator("#store-notice")).toBeVisible();
+    await expect(page.locator("#store-notice")).toContainText("restart deletes every message");
     await expect(page.locator("#expiry-label")).toContainText("Expires");
     for (const id of ["#copy-url-button", "#copy-pin-button"]) {
         await page.locator(id).click();
@@ -186,9 +188,10 @@ test("WEB-retrieve.warning-before-opening and a wrong PIN can be retried", async
     const { link, pin } = await createMessage(page, server, { text: "retry" });
     const reader = await context.newPage();
     await reader.goto(link);
-    await expect(reader.locator("#open-warning")).toContainText("Opening deletes the message");
-    await expect(reader.locator("#open-warning")).toContainText("connection drops");
-    await expect(reader.locator("#store-notice")).toContainText("memory only");
+    await expect(reader.locator("#open-warning")).toContainText("Opening deletes it from the server, even if it can't be read");
+    await expect(reader.locator("#open-warning")).toContainText("Keep this page open");
+    // The longer explanation, including a dropped connection, is in "How it works".
+    await expect(reader.locator("footer details")).toContainText("connection drops");
     const wrongPin = pin === "000000" ? "111111" : "000000";
     await reader.locator("#retrieve-pin").fill(wrongPin);
     await reader.locator("#retrieve-button").click();

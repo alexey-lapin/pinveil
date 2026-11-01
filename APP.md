@@ -31,7 +31,7 @@ This document is the behavior spec for pinveil v1 in Rust: `pinveil-server`, the
 7. A message dies after `max_failed_attempts` wrong PINs (default 3). Each wrong attempt, and the burn, is committed before the response.
 8. A message dies when its TTL runs out, whether or not anyone tried to read it. A retrieval checked after `expiresAt` fails. Physical removal can happen later, during a sweep, so expiry does not mean immediate secure erasure.
 9. All error responses for "gone" states are identical. Expired, already read, burned, and never existed all return the same 404 and body.
-10. The store mode is disclosed to users. In `memory` mode a restart loses every message. In `sqlite` mode messages survive restarts, and deleted data may remain recoverable on disk. Both clients and the docs say which mode a server runs.
+10. The store mode is disclosed to users. In `memory` mode a restart loses every message. In `sqlite` mode messages survive restarts, and deleted data may remain recoverable on disk. The docs, the browser's create page, and both CLI commands say which mode a server runs.
 11. No accounts, no analytics, no third-party scripts. Every browser asset comes from the same origin.
 12. Passphrase generation fails closed. A client that can't get a complete, valid wordlist (7776 distinct entries) refuses to create the message instead of drawing words from whatever it got.
 13. Every error response uses the single JSON shape, including request parsing errors, missing headers or multipart parts, oversized or malformed bodies, unsupported methods or media types, and unknown routes.
@@ -50,7 +50,7 @@ This document is the behavior spec for pinveil v1 in Rust: `pinveil-server`, the
    3. Builds the inner payload and encrypts it (see [Cryptography](#cryptography)).
    4. POSTs the blob, PIN, and TTL to `/api/messages`.
 5. The server returns the message id and expiry time.
-6. The browser shows `https://<origin>/message/<id>#<passphrase>` and the PIN, each with a copy button, plus the local expiry time. It tells the sender to send the link and the PIN over different channels, and states the store mode.
+6. The browser shows `https://<origin>/message/<id>#<passphrase>` and the PIN, each with a copy button, plus the local expiry time. It tells the sender to send the link and the PIN over different channels. The store mode stays visible in the page footer.
 
 ### Retrieve in the browser
 
@@ -433,7 +433,8 @@ The server writes one line per request to stderr: method, path, status, and dura
 - The wordlist is validated after every fetch: the HTTP status, 7776 entries, all distinct and well formed.
 - "Download all" builds a store-only zip in the browser (method 0, CRC-32, UTF-8 names), following PKWARE APPNOTE, from the already decrypted files. Nothing goes to the server. The text stays separately copyable and isn't part of the zip.
 - File names follow the [export name policy](#export-names), both in the zip and as single downloads. The original names are displayed as plain text.
-- Both pages show the store mode. The retrieve page explains that opening deletes the message (see [Retrieve in the browser](#retrieve-in-the-browser)), and that a dropped connection after opening loses it.
+- The create page shows the store mode. The recipient can't act on it, so the retrieve page doesn't.
+- The retrieve page says in one line, before the PIN is submitted, that opening deletes the message even if it can't be read (see [Retrieve in the browser](#retrieve-in-the-browser)). Its collapsed "How it works" section adds that a dropped connection after opening loses the message.
 - The create page checks every limit from the files' names, types, and sizes before reading any file. A browser that reports no usable MIME type records `application/octet-stream`. The multipart part carrying the blob always has the filename `blob`.
 - Single downloads and the zip (`pinveil-files.zip`) are saved as `application/octet-stream`, so a stored MIME type can never make the browser render a file.
 - Without a fragment, the retrieve page disables the PIN form, so the message can't be consumed by a link that can't decrypt it.

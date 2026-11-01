@@ -29,9 +29,8 @@ export function initCreatePage() {
     let files = [];
 
     $("store-notice").textContent = storeModeNotice(config.storeMode);
-    $("result-store-notice").textContent = storeModeNotice(config.storeMode);
     $("file-limits").textContent =
-        `Up to ${config.maxFiles} files, ${formatBytes(config.maxPayloadBytes)} in total. Names and types are encrypted too.`;
+        `Up to ${config.maxFiles} files, ${formatBytes(config.maxPayloadBytes)} in total.`;
     pinInput.value = generatePin();
     $("new-pin-button").addEventListener("click", () => {
         pinInput.value = generatePin();
@@ -196,7 +195,12 @@ function initFileDrop(addFiles) {
         // Clearing lets the same file be picked again after a removal.
         input.value = "";
     });
+    // The zone is the whole form: only file drags are ours, so text still drops into the textarea.
+    const carriesFiles = (event) => [...event.dataTransfer.types].includes("Files");
     zone.addEventListener("dragover", (event) => {
+        if (!carriesFiles(event)) {
+            return;
+        }
         event.preventDefault();
         zone.classList.add("drag-over");
     });
@@ -206,6 +210,9 @@ function initFileDrop(addFiles) {
         }
     });
     zone.addEventListener("drop", (event) => {
+        if (!carriesFiles(event)) {
+            return;
+        }
         event.preventDefault();
         zone.classList.remove("drag-over");
         addFiles([...event.dataTransfer.files]);
