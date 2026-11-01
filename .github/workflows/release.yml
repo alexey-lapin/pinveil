@@ -5,8 +5,8 @@ name: Release
 # Entry points:
 #   - push a v*.*.* tag (vX.Y.Z or a prerelease such as vX.Y.Z-rc.1),
 #   - release-dispatch.yml calls this with `tag` after creating it,
-#   - pushes to feature branches that touch release files run everything up to the
-#     tests as a dry run: nothing is staged or published.
+#   - pull requests and pushes to feature branches that touch release files run
+#     everything up to the tests as a dry run: nothing is staged or published.
 #
 # A prerelease (a tag with a `-` suffix) gets a prerelease GitHub release and a candidate
 # image tag only. It never touches `latest`, the stable image aliases, the Homebrew tap,
@@ -20,6 +20,11 @@ on:
   push:
     tags: ["v*.*.*"]
     branches: ["feature/**"]
+    paths:
+      - "packaging/**"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-dispatch.yml"
+  pull_request:
     paths:
       - "packaging/**"
       - ".github/workflows/release.yml"

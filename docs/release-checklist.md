@@ -36,8 +36,8 @@ Repository secrets the publish job needs (fine-grained PATs, Contents: read and 
 - `TAP_GITHUB_TOKEN` for `alexey-lapin/homebrew-tap`
 - `SCOOP_GITHUB_TOKEN` for `alexey-lapin/scoop-bucket`
 
-Pushes to `feature/**` that change `packaging/` or the release workflows run the same
-build and tests as a dry run, with nothing staged or published.
+Pull requests and pushes to `feature/**` that change `packaging/` or the release workflows
+run the same build and tests as a dry run, with nothing staged or published.
 
 ## Store compatibility
 
