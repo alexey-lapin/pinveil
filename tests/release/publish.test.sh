@@ -38,10 +38,20 @@ case "$1 $2" in
     shift 3
     while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do cp "$1" "$state/assets/"; shift; done ;;
   "release download")
-    dir=$(echo "$@" | sed 's/.*--dir \([^ ]*\).*/\1/')
-    pattern=$(echo "$@" | sed 's/.*--pattern \([^ ]*\).*/\1/')
-    # shellcheck disable=SC2086
-    cp "$state"/assets/$pattern "$dir/" ;;
+    # --dir once; --pattern repeatable, as in gh.
+    shift 3
+    dir='' patterns=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dir) dir=$2; shift 2 ;;
+        --pattern) patterns+=("$2"); shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    for pattern in "${patterns[@]}"; do
+      # shellcheck disable=SC2086
+      cp "$state"/assets/$pattern "$dir/"
+    done ;;
   "release edit")
     echo false >"$state/state"
     [ -f "$FAKE/fail-edit" ] && exit 1
@@ -96,14 +106,20 @@ dist="$work/dist"
 mkdir -p "$dist"
 echo one >"$dist/pinveil_1.2.0_linux_amd64.tar.gz"
 echo two >"$dist/pinveil_1.2.0_windows_amd64.zip"
-(cd "$dist" && if command -v sha256sum >/dev/null; then sha256sum pinveil_* >checksums.txt; else shasum -a 256 pinveil_* >checksums.txt; fi)
+echo three >"$dist/pinveil-server_1.2.0_linux_amd64.tar.gz"
+echo four >"$dist/pinveil-server_1.2.0_windows_amd64.zip"
+checksum() { (cd "$1" && if command -v sha256sum >/dev/null; then sha256sum pinveil_* pinveil-server_* >checksums.txt; else shasum -a 256 pinveil_* pinveil-server_* >checksums.txt; fi); }
+checksum "$dist"
 
 # --- stage-release -----------------------------------------------------------------------
 reset stage-new
 "$publish" stage-release v1.2.0 false "$dist"
 summary_has "staged: draft release v1.2.0"
 summary_has "verified: staged assets of v1.2.0"
-ok "stage-release creates a draft and verifies it"
+for f in "$dist"/pinveil_* "$dist"/pinveil-server_* "$dist/checksums.txt"; do
+  cmp -s "$f" "$FAKE/release/assets/$(basename "$f")" || fail "draft lacks $(basename "$f")"
+done
+ok "stage-release creates a draft with the CLI and server archives and verifies it"
 
 "$publish" stage-release v1.2.0 false "$dist"
 summary_has "replaced the assets of draft release v1.2.0"
@@ -117,13 +133,26 @@ ok "stage-release leaves a published release with the same checksums alone"
 rebuilt="$work/rebuilt"
 mkdir -p "$rebuilt"
 echo other >"$rebuilt/pinveil_1.2.0_linux_amd64.tar.gz"
-cp "$dist/pinveil_1.2.0_windows_amd64.zip" "$rebuilt/"
-(cd "$rebuilt" && if command -v sha256sum >/dev/null; then sha256sum pinveil_* >checksums.txt; else shasum -a 256 pinveil_* >checksums.txt; fi)
+cp "$dist/pinveil_1.2.0_windows_amd64.zip" "$dist"/pinveil-server_* "$rebuilt/"
+checksum "$rebuilt"
 if "$publish" stage-release v1.2.0 false "$rebuilt" 2>/dev/null; then fail "a rebuild replaced a published release"; fi
 summary_has "refused: release v1.2.0 is already published with different archives"
 cmp -s "$FAKE/release/assets/pinveil_1.2.0_linux_amd64.tar.gz" "$dist/pinveil_1.2.0_linux_amd64.tar.gz" ||
   fail "the published asset was overwritten"
 ok "stage-release refuses to replace a published release with a rebuild"
+
+server_rebuilt="$work/server-rebuilt"
+mkdir -p "$server_rebuilt"
+cp "$dist"/pinveil_* "$server_rebuilt/"
+cp "$dist/pinveil-server_1.2.0_windows_amd64.zip" "$server_rebuilt/"
+echo other >"$server_rebuilt/pinveil-server_1.2.0_linux_amd64.tar.gz"
+checksum "$server_rebuilt"
+: >"$GITHUB_STEP_SUMMARY"
+if "$publish" stage-release v1.2.0 false "$server_rebuilt" 2>/dev/null; then fail "a server rebuild replaced a published release"; fi
+summary_has "refused: release v1.2.0 is already published with different archives"
+cmp -s "$FAKE/release/assets/pinveil-server_1.2.0_linux_amd64.tar.gz" "$dist/pinveil-server_1.2.0_linux_amd64.tar.gz" ||
+  fail "the published server asset was overwritten"
+ok "stage-release refuses a published release whose server archive was rebuilt"
 
 reset stage-view-error
 mkdir -p "$FAKE/release"

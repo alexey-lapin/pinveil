@@ -26,9 +26,10 @@ Staging pushes candidate images (`candidate-<version>-<run id>.<attempt>[-arch]`
 public `ghcr.io/alexey-lapin/pinveil` package, including for release candidates. They
 never move `latest` or the stable aliases.
 
-Every archive and the image ship `THIRD-PARTY-NOTICES.txt`, generated from the locked
-dependency set (`packaging/third-party.py`); the build fails if a crate has no license
-file.
+Each target gets a CLI archive (`pinveil_*`, which Homebrew and Scoop install) and a server
+archive (`pinveil-server_*`). Every archive and the image ship `THIRD-PARTY-NOTICES.txt` for
+their binary, generated from its locked dependency graph (`packaging/third-party.py`); the
+build fails if a crate has no license file.
 
 Repository secrets the publish job needs (fine-grained PATs, Contents: read and write):
 

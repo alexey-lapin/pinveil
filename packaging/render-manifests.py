@@ -2,7 +2,8 @@
 
     python3 render-manifests.py VERSION BASE_URL CHECKSUMS OUT_DIR
 
-BASE_URL is where the archives live: the GitHub release download URL, or a file:// URL
+Both install only the CLI, from the `pinveil_*` archives; the server ships as the image
+and the `pinveil-server_*` archives. BASE_URL is where the archives live: the GitHub release download URL, or a file:// URL
 for testing. CHECKSUMS is the release's checksums.txt (`<sha256>  <archive>` lines).
 Writes OUT_DIR/pinveil.rb and OUT_DIR/pinveil.json.
 """
@@ -12,7 +13,7 @@ import pathlib
 import sys
 
 HOMEPAGE = "https://github.com/alexey-lapin/pinveil"
-DESCRIPTION = "Zero-knowledge one-time secret sharing: CLI and self-hosted server"
+DESCRIPTION = "Zero-knowledge one-time secret sharing CLI"
 
 
 def main(version, base_url, checksums, out_dir):
@@ -61,12 +62,11 @@ class Pinveil < Formula
   end
 
   def install
-    bin.install "pinveil", "pinveil-server"
+    bin.install "pinveil"
   end
 
   test do
     assert_match "pinveil {version}", shell_output("#{{bin}}/pinveil --version")
-    assert_match "pinveil-server {version}", shell_output("#{{bin}}/pinveil-server --version")
   end
 end
 '''
@@ -75,7 +75,7 @@ end
         "architecture": {
             "64bit": {
                 "url": windows_amd[0],
-                "bin": ["pinveil.exe", "pinveil-server.exe"],
+                "bin": ["pinveil.exe"],
                 "hash": windows_amd[1],
             }
         },

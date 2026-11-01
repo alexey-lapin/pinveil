@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Release smoke test for one target's staged archive (implementation plan, Phase 6 step 3).
+# Release smoke test for one target's staged archives (implementation plan, Phase 6 step 3).
 #
-#   packaging/smoke.sh <archive> <version> <tty-run> [tls]
+#   packaging/smoke.sh <cli-archive> <server-archive> <version> <tty-run> [tls]
 #
-# Extracts the archive and checks, against its binaries:
-#   - both report <version>,
+# Extracts each archive into its own directory and checks:
+#   - each holds exactly its one binary and the license files, and both report <version>,
 #   - the server binary has no fault-injection interface,
 #   - the server serves its embedded pages, scripts, and a valid wordlist,
 #   - a create and retrieve round trip between the staged server and CLI, driven on a
@@ -13,16 +13,18 @@
 #     the operating system's store (installing it needs admin rights, as on CI runners).
 set -euo pipefail
 
-archive=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
-version=$2
-tty_run=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
-mode=${4:-plain}
+absolute() { echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
+cli_archive=$(absolute "$1")
+server_archive=$(absolute "$2")
+version=$3
+tty_run=$(absolute "$4")
+mode=${5:-plain}
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 pids=()
 cleanup() {
-  for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+  for pid in ${pids[@]+"${pids[@]}"}; do kill "$pid" 2>/dev/null || true; done
   # Leave the work directory first: Windows can't remove the current directory. A temp
   # dir a just-killed process still holds is not a test failure.
   cd /
@@ -36,22 +38,32 @@ case "$(uname -s)" in
 esac
 fail() { echo "smoke: $*" >&2; exit 1; }
 
-mkdir "$work/bin"
-case "$archive" in
-  *.zip)
-    cd "$work/bin"
-    if command -v 7z >/dev/null; then 7z x -bd "$archive" >/dev/null; else unzip -q "$archive"; fi
-    cd - >/dev/null ;;
-  *) tar -C "$work/bin" -xzf "$archive" ;;
-esac
-server="$work/bin/pinveil-server$exe"
-cli="$work/bin/pinveil$exe"
-for file in "$server" "$cli" "$work/bin/LICENSE" "$work/bin/NOTICE" \
-  "$work/bin/WORDLIST-LICENSE.md" "$work/bin/THIRD-PARTY-NOTICES.txt"; do
-  [ -f "$file" ] || fail "missing $(basename "$file") in the archive"
-done
-grep -q "^Applies to tokio " "$work/bin/THIRD-PARTY-NOTICES.txt" || fail "third-party notices lack tokio"
-echo "license files: ok"
+# extract <archive> <dir> <binary>: unpacks into its own directory, so a license file one
+# archive lacks can't be hidden by the other's copy, and checks the exact contents.
+extract() {
+  local archive=$1 dir=$2 bin=$3
+  mkdir -p "$dir"
+  case "$archive" in
+    *.zip)
+      if command -v 7z >/dev/null; then (cd "$dir" && 7z x -bd "$archive" >/dev/null)
+      else (cd "$dir" && unzip -q "$archive"); fi ;;
+    *) tar -C "$dir" -xzf "$archive" ;;
+  esac
+  local expected actual
+  expected=$(printf '%s\n' "$bin$exe" LICENSE NOTICE THIRD-PARTY-NOTICES.txt WORDLIST-LICENSE.md | sort)
+  actual=$(cd "$dir" && find . -type f | sed 's|^\./||' | sort)
+  [ "$actual" = "$expected" ] || fail "$(basename "$archive") holds: $(echo "$actual" | tr "\n" " ")"
+  grep -q "^Applies to tokio " "$dir/THIRD-PARTY-NOTICES.txt" ||
+    fail "$(basename "$archive"): third-party notices lack tokio"
+}
+extract "$cli_archive" "$work/cli" pinveil
+extract "$server_archive" "$work/server" pinveil-server
+grep -q "^Applies to aws-lc-sys " "$work/cli/THIRD-PARTY-NOTICES.txt" || fail "CLI notices lack aws-lc-sys"
+grep -q "^Applies to libsqlite3-sys " "$work/server/THIRD-PARTY-NOTICES.txt" ||
+  fail "server notices lack libsqlite3-sys"
+server="$work/server/pinveil-server$exe"
+cli="$work/cli/pinveil$exe"
+echo "archive contents and license files: ok"
 
 "$server" --version | grep -qx "pinveil-server $version (protocol 2)" || fail "server version"
 "$cli" --version | grep -qx "pinveil $version (protocol 2)" || fail "CLI version"
@@ -130,4 +142,4 @@ if [ "$mode" = tls ]; then
   round_trip "https://localhost:$tls_port"
   echo "round trip over HTTPS with a private CA: ok"
 fi
-echo "smoke test passed for $(basename "$archive")"
+echo "smoke test passed for $(basename "$cli_archive") and $(basename "$server_archive")"

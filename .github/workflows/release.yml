@@ -133,8 +133,8 @@ jobs:
       - name: Package
         id: package
         run: |
-          archive=$(packaging/package.sh ${{ matrix.target }} ${{ needs.plan.outputs.version }})
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          # Two lines, cli=<path> and server=<path>: this target's two archives.
+          packaging/package.sh ${{ matrix.target }} ${{ needs.plan.outputs.version }} >> "$GITHUB_OUTPUT"
 
       - name: Keep the Linux server binary for the image
         if: matrix.musl
@@ -142,12 +142,14 @@ jobs:
           arch=$([ "${{ matrix.target }}" = x86_64-unknown-linux-musl ] && echo amd64 || echo arm64)
           mkdir -p "image/dist/linux_$arch"
           cp "target/${{ matrix.target }}/release/pinveil-server" "image/dist/linux_$arch/"
-          python3 packaging/third-party.py "${{ matrix.target }}" "image/dist/linux_$arch/THIRD-PARTY-NOTICES.txt"
+          python3 packaging/third-party.py pinveil-server "${{ matrix.target }}" "image/dist/linux_$arch/THIRD-PARTY-NOTICES.txt"
 
       - uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.target }}
-          path: ${{ steps.package.outputs.archive }}
+          path: |
+            ${{ steps.package.outputs.cli }}
+            ${{ steps.package.outputs.server }}
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
@@ -172,7 +174,9 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum pinveil_* > checksums.txt
+          # Exactly a CLI and a server archive per target.
+          [ "$(ls pinveil_* | wc -l)" = 4 ] && [ "$(ls pinveil-server_* | wc -l)" = 4 ]
+          sha256sum pinveil_* pinveil-server_* > checksums.txt
           cat checksums.txt
           { echo "### Artifacts"; echo '```'; cat checksums.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
@@ -221,7 +225,7 @@ jobs:
       - name: Smoke test, plain HTTP and HTTPS through a private CA
         run: |
           exe=$([ "$RUNNER_OS" = Windows ] && echo .exe || true)
-          packaging/smoke.sh staged/pinveil_* ${{ needs.plan.outputs.version }} "target/debug/tty-run$exe" tls
+          packaging/smoke.sh staged/pinveil_* staged/pinveil-server_* ${{ needs.plan.outputs.version }} "target/debug/tty-run$exe" tls
 
   container:
     needs: [plan, build]
@@ -305,9 +309,11 @@ jobs:
           cp out/pinveil.rb "$(brew --repository pinveil/staging)/Formula/pinveil.rb"
           brew install pinveil/staging/pinveil
           brew test pinveil/staging/pinveil
-          pinveil --version
-          pinveil-server --version
-          python3 -m json.tool out/pinveil.json >/dev/null
+          # The formula installs the CLI and nothing else.
+          bin="$(brew --prefix pinveil/staging/pinveil)/bin"
+          [ "$(ls "$bin")" = pinveil ] || { echo "formula installed: $(ls "$bin")"; exit 1; }
+          "$bin/pinveil" --version
+          python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); a=m["architecture"]["64bit"]; assert a["bin"]==["pinveil.exe"], a; assert "/pinveil_" in a["url"], a' out/pinveil.json
 
   stage:
     needs: [plan, checksums, smoke, container, formula]

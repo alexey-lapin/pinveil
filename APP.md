@@ -524,9 +524,9 @@ The CLI creates a fresh private directory (owner-only; on Windows, its access li
 
 People self-host pinveil however they like. Each release, cut from a `v*.*.*` tag, ships:
 
-- `pinveil-server` and `pinveil` binaries for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`, as `pinveil_<version>_<os>_<arch>` archives (`.tar.gz`, or `.zip` on Windows) with `LICENSE`, `NOTICE`, the wordlist's license note, and `THIRD-PARTY-NOTICES.txt` (every linked crate's license texts), plus a `checksums.txt` of their SHA-256 hashes,
+- for `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`, two archives each (`.tar.gz`, or `.zip` on Windows): `pinveil_<version>_<os>_<arch>` with the CLI and `pinveil-server_<version>_<os>_<arch>` with the server. Each holds its binary, `LICENSE`, `NOTICE`, the wordlist's license note, and `THIRD-PARTY-NOTICES.txt` (the license texts of every crate linked into that binary). A `checksums.txt` lists their SHA-256 hashes,
 - a multi-arch server image at `ghcr.io/alexey-lapin/pinveil` (`<version>`, and for stable releases `<major>.<minor>` and `latest`), running as an unprivileged user with a writable `/data` for the SQLite store,
-- a Homebrew formula in `alexey-lapin/homebrew-tap` and a Scoop manifest in `alexey-lapin/scoop-bucket` that install the prebuilt archives (stable releases only).
+- a Homebrew formula in `alexey-lapin/homebrew-tap` and a Scoop manifest in `alexey-lapin/scoop-bucket` that install the CLI from its prebuilt archives (stable releases only). The server is deployed from the image or its archive.
 
 pinveil is licensed under the Apache License 2.0; `NOTICE` credits the EFF wordlist (CC BY 4.0).
 

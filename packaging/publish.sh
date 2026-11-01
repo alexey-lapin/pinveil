@@ -58,11 +58,11 @@ stage_release() {
     missing)
       local flags=(--draft --verify-tag --generate-notes --title "$tag")
       [ "$prerelease" = true ] && flags+=(--prerelease)
-      gh release create "$tag" "$dist"/pinveil_* "$dist/checksums.txt" "${flags[@]}"
+      gh release create "$tag" "$dist"/pinveil_* "$dist"/pinveil-server_* "$dist/checksums.txt" "${flags[@]}"
       note "staged: draft release $tag" ;;
     true)
       # Still a draft, so nothing public refers to its assets yet: replace them.
-      gh release upload "$tag" "$dist"/pinveil_* "$dist/checksums.txt" --clobber
+      gh release upload "$tag" "$dist"/pinveil_* "$dist"/pinveil-server_* "$dist/checksums.txt" --clobber
       note "staged: replaced the assets of draft release $tag" ;;
     false)
       # Already public: never replace. A retry is fine only if it is the same build.
@@ -80,7 +80,7 @@ stage_release() {
   # The staged copies must be the tested bytes.
   local staged
   staged=$(mktemp -d)
-  gh release download "$tag" --dir "$staged" --pattern 'pinveil_*'
+  gh release download "$tag" --dir "$staged" --pattern 'pinveil_*' --pattern 'pinveil-server_*'
   cp "$dist/checksums.txt" "$staged/"
   (cd "$staged" && sha256_check checksums.txt) || die "the staged assets of $tag differ from the tested ones"
   note "verified: staged assets of $tag match checksums.txt"
