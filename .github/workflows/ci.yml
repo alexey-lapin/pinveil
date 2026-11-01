@@ -128,6 +128,9 @@ jobs:
       - name: Publish logic tests
         run: tests/release/publish.test.sh
 
+      - name: Packaging tests
+        run: tests/release/package.test.sh
+
   # Playwright against a real pinveil-server, including browser <-> CLI round trips with
   # the CLI built for each release target. All three engines run on Linux x86_64; the other
   # targets run the suite in Chromium.
@@ -213,6 +216,3 @@ jobs:
           name: playwright-results-${{ matrix.os }}
           path: tests/browser/test-results
           retention-days: 7
-
-      - name: Packaging tests
-        run: tests/release/package.test.sh
