@@ -248,7 +248,7 @@ The release runs in four stages: build, then stage, then test, then publish.
    - push the formula to `alexey-lapin/homebrew-tap`.
    Pushing to the tap uses a dedicated, narrowly scoped token (a GitHub App or fine-grained PAT), stored as a secret that only the publish job can read. The workflow's own `GITHUB_TOKEN` can't write to another repository. Workflow permissions are least-privilege per job.
 
-The tag pattern `v*.*.*` also matches release candidates such as `v1.0.0-rc.1`. The workflow detects a prerelease suffix. Candidates get prerelease artifacts and candidate image tags only. They never touch `latest`, the stable aliases, or the tap. A failed check in the test stage blocks publication entirely.
+The tag pattern `v*.*.*` also matches release candidates such as `v0.1.0-rc.1`. The workflow detects a prerelease suffix. Candidates get prerelease artifacts and candidate image tags only. They never touch `latest`, the stable aliases, or the tap. A failed check in the test stage blocks publication entirely.
 
 The publish steps themselves (GitHub release, image tags, tap commit) go to three separate services, so they can't be atomic. Instead:
 
@@ -261,7 +261,7 @@ Done when a release candidate goes through the whole workflow without publishing
 
 As built (`.github/workflows/release.yml`, `release-dispatch.yml`, `packaging/`): the tests run on the built artifacts before staging, and staging then verifies the staged copies against the same `checksums.txt`, so the bytes tested are the bytes published. The conventions (dispatch flow, archive names, release notes categories, tap and bucket tokens, no tap or bucket push for prereleases) follow the owner's other release pipelines, which use GoReleaser. GoReleaser isn't used here: native Cargo jobs per runner were chosen for these targets, since GoReleaser's default Rust route (cargo-zigbuild) doesn't cover `x86_64-pc-windows-msvc` and the C dependencies (aws-lc, bundled SQLite) are simplest to build natively. Its Rust builder can run other commands, so this is a choice, not a hard limit. A Scoop manifest joins the Homebrew formula.
 
-### Phase 7: Docs and v1.0.0
+### Phase 7: Docs and v0.1.0
 
 - **README:** what pinveil is, how to install it, and a quick start for both clients.
 - **Operator guide:**
@@ -273,7 +273,7 @@ As built (`.github/workflows/release.yml`, `release-dispatch.yml`, `packaging/`)
   - backups and their at-most-once caveat,
   - upgrades and draining the store.
 - **Threat model.**
-- **Final check:** every row of `docs/coverage.md` is green. Accepted tradeoffs (wrong-passphrase consumption, dropped-response loss, 403 on a live id, public ids in logs) are asserted by tests and documented. Then tag `v1.0.0`.
+- **Final check:** every row of `docs/coverage.md` is green. Accepted tradeoffs (wrong-passphrase consumption, dropped-response loss, 403 on a live id, public ids in logs) are asserted by tests and documented. Then tag `v0.1.0`: the first release of the rewrite, continuing the 0.0.x line of the Java server under the same image name. Its release notes carry a short "Upgrading from 0.0.x" section, since nothing is kept compatible: settings move from `APP_*` to `PINVEIL_*` (the pepper is `PINVEIL_PIN__PEPPER`), the image is `scratch`-based and runs as UID 65532, and unread messages from the in-memory store are lost.
 
 ## Risks
 

@@ -2,7 +2,7 @@ name: Release (dispatch)
 
 # Manual entry point for a release. The version is the workspace version in Cargo.toml on
 # the dispatched branch (the binaries print it, so the tag must match it): bump it in a
-# pull request first, including a prerelease suffix such as 1.0.0-rc.1 for a candidate.
+# pull request first, including a prerelease suffix such as 0.1.0-rc.1 for a candidate.
 # This job creates and pushes the tag, then calls the reusable release workflow.
 #
 # Pushing the tag with the default GITHUB_TOKEN does not re-trigger release.yml's
