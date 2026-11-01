@@ -38,6 +38,8 @@ export function initCreatePage() {
     initTtl(ttlPreset);
 
     const renderFiles = () => {
+        // The limits matter once there are files; an empty form stays quiet.
+        $("file-limits").classList.toggle("hidden", files.length === 0);
         const list = $("file-list");
         list.replaceChildren(
             ...files.map((file, index) => {

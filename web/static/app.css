@@ -200,15 +200,26 @@ pre {
     --cell-bg: var(--accent-soft);
 }
 
+/* The rows wrap, so at narrow widths or high zoom a button moves below its field
+   instead of pushing past the edge. Button labels wrap too, for the longer manual-copy
+   fallback text. */
 .pin-row,
 .copy-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
 }
 
-.copy-row .pin {
-    margin-right: auto;
+.copy-row > input.mono {
+    flex: 1 1 14rem;
+}
+
+.pin-row > button,
+.copy-row > button,
+#copy-text-button {
+    white-space: normal;
+    max-width: 100%;
 }
 
 /* Settings: PIN and expiry side by side when there is room. */
@@ -349,10 +360,6 @@ button:disabled {
 }
 
 /* Results */
-
-#result-ready .copy-row input.mono {
-    flex: 1;
-}
 
 #expiry-label {
     margin: -6px 0 20px;

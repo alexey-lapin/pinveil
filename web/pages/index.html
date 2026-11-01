@@ -23,7 +23,7 @@
                 <div class="files">
                     <input id="message-files" type="file" multiple class="visually-hidden" aria-labelledby="files-label">
                     <label for="message-files" class="link-button" id="files-label">Add files</label>
-                    <small class="muted" id="file-limits"></small>
+                    <small class="muted hidden" id="file-limits"></small>
                     <ul class="file-list" id="file-list"></ul>
                 </div>
                 <div class="settings">
@@ -53,20 +53,20 @@
         <div class="hidden" id="result-ready">
             <h1>Link ready</h1>
             <p class="lead">Send the link and the PIN separately, for example the link by email and the PIN by chat.</p>
-            <label class="field">
-                <span class="label">Link</span>
-                <span class="copy-row">
+            <div class="field">
+                <label class="label" for="share-url">Link</label>
+                <div class="copy-row">
                     <input id="share-url" class="mono" readonly>
-                    <button class="secondary" type="button" id="copy-url-button">Copy</button>
-                </span>
-            </label>
-            <label class="field">
-                <span class="label">PIN</span>
-                <span class="copy-row">
+                    <button class="secondary" type="button" id="copy-url-button">Copy link</button>
+                </div>
+            </div>
+            <div class="field">
+                <label class="label" for="share-pin">PIN</label>
+                <div class="copy-row">
                     <input id="share-pin" class="pin" readonly>
-                    <button class="secondary" type="button" id="copy-pin-button">Copy</button>
-                </span>
-            </label>
+                    <button class="secondary" type="button" id="copy-pin-button">Copy PIN</button>
+                </div>
+            </div>
             <p class="muted" id="expiry-label"></p>
             <button class="secondary" type="button" id="create-another-button">New message</button>
         </div>
