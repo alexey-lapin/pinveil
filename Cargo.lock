@@ -1243,7 +1243,7 @@ checksum = "13bee6c73da26345c729282832b60b0363cf3dd9f4bfd81d8551b7a1c889a113"
 
 [[package]]
 name = "pinveil-cli"
-version = "0.0.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "directories",
  "expectrl",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "pinveil-core"
-version = "0.0.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "aes-gcm",
  "aes-kw",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "pinveil-fs"
-version = "0.0.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "rustix",
  "tempfile",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "pinveil-server"
-version = "0.0.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "argon2",
  "axum",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "pty-probe"
-version = "0.0.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "expectrl",
  "libc",

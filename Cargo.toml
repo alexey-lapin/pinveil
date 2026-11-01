@@ -4,7 +4,7 @@ members = ["crates/*"]
 
 [workspace.package]
 # The release version of both binaries; a release tag v<version> must match it.
-version = "0.0.0"
+version = "0.1.0-rc.1"
 license = "Apache-2.0"
 repository = "https://github.com/alexey-lapin/pinveil"
 edition = "2024"
