@@ -28,7 +28,9 @@ handling hostile message content (file names, terminal escapes).
 link and the PIN, traffic analysis (sizes and timing), and availability against a
 determined flood. TLS is the operator's job.
 
-The full specification, including every invariant, is in [APP.md](APP.md).
+The full threat model, with the accepted tradeoffs and the tests that check them, is in
+[docs/threat-model.md](docs/threat-model.md). The specification, including every invariant,
+is in [APP.md](APP.md).
 
 ## Distribution integrity
 

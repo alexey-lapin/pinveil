@@ -2,6 +2,9 @@
 # Release staging and publishing steps (implementation plan, Phase 6), one command each:
 #
 #   packaging/publish.sh stage-release  <tag> <prerelease:true|false> <dist-dir>
+#
+# stage-release writes the notes GitHub generates from merged pull requests. When
+# docs/release-notes/<tag>.md exists, its text comes first, above the generated notes.
 #   packaging/publish.sh publish-release <tag>
 #   packaging/publish.sh tag-image      <image> <digest> <version> <prerelease:true|false>
 #   packaging/publish.sh push-manifest  <repo> <token> <source> <destination> <tag> <version>
@@ -57,6 +60,9 @@ stage_release() {
   case "$draft" in
     missing)
       local flags=(--draft --verify-tag --generate-notes --title "$tag")
+      local notes
+      notes="$(dirname "$0")/../docs/release-notes/$tag.md"
+      [ -f "$notes" ] && flags+=(--notes-file "$notes")
       [ "$prerelease" = true ] && flags+=(--prerelease)
       gh release create "$tag" "$dist"/pinveil_* "$dist"/pinveil-server_* "$dist/checksums.txt" "${flags[@]}"
       note "staged: draft release $tag" ;;

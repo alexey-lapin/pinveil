@@ -281,7 +281,7 @@ The decoding ceilings are protocol constants that both clients share, and operat
 
 | Constant | Value |
 |---|---|
-| Accepted KDF iterations | 600,000 to 2,000,000. Provisional: the final range is set by the benchmark tracked in `docs/coverage.md` (`KDF-range`) before v1. |
+| Accepted KDF iterations | 600,000 to 2,000,000. The lower end is OWASP's PBKDF2-HMAC-SHA-256 minimum; the upper end bounds the work a sender can make a recipient do. Measured in `docs/kdf-benchmark.md`. |
 | Outer header | 1024 bytes |
 | Manifest | 256 KiB |
 | Files per message | 256 |

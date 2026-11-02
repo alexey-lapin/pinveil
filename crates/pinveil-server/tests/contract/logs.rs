@@ -61,3 +61,41 @@ async fn srv_logs_never_contain_pins_headers_or_bodies() {
         );
     }
 }
+
+#[tokio::test]
+async fn acc_message_ids_appear_in_logs() {
+    // Accepted tradeoff (APP.md gap 13): ids are public, so the path in each request line
+    // carries the message id.
+    let server = Server::start().await;
+    let form = Form::new()
+        .part("blob", Part::bytes(b"x".to_vec()).file_name("blob"))
+        .text("pin", PIN)
+        .text("ttl", "600");
+    let created: Value = server
+        .client
+        .post(server.url("/api/messages"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = created["id"].as_str().unwrap();
+    server
+        .client
+        .get(server.url(&format!("/api/messages/{id}/retrieve")))
+        .header("x-message-pin", PIN)
+        .send()
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !server.stderr().contains(id) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let logs = server.stderr();
+    assert!(
+        logs.contains(&format!("/api/messages/{id}/retrieve")),
+        "{logs}"
+    );
+}
