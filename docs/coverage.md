@@ -103,7 +103,7 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | EXP-names | Export-name policy: separators, controls, Windows-invalid characters, device names (including superscripts), trailing dots and spaces, case-insensitive duplicates, 255-byte limit with long extensions | P1.6 | core `cli_output_export_names_match_shared_vectors`, `export_names_are_unique_short_and_safe`; JS `export names ...`; both read `tests/vectors/export-names.json` | covered (CI run 41165815026 at c0d0b65) |
 | ZERO-keys | KEK, content key, KDF input, and plaintext buffers are zeroized; AES, AES-KW, and GHASH state is wiped on drop | P1.5 | compile-time `wiped_on_drop::<Aes256Gcm>()` and `::<KwAes256>()` in `crypto.rs`; `zeroize` features on aes-gcm, aes-kw, hmac, sha2. JS can't wipe Web Crypto state; it clears its own byte arrays. | covered (CI run 41165815026 at c0d0b65) |
 | FMT-canonical | Canonical encoding (APP.md): fixed key order, no whitespace or BOM, minimal escaping, well-formed strings | P1.3, P1.4, P1.7 | vectors `escaping in manifest strings ...`, `byte-order mark before the manifest`, `lone high surrogate ...`, `lone low surrogate ...`, BOM text positives | covered (CI run 41165815026 at c0d0b65) |
-| KDF-range | The accepted KDF range (provisionally 600,000 to 2,000,000) is benchmarked on representative browsers and CLI targets before v1 freezes it | P7 (decision) | benchmark report with timings at both ends | planned |
+| KDF-range | The accepted KDF range (600,000 to 2,000,000) is benchmarked on representative browsers and CLI targets before v1 freezes it | P7 (decision) | `docs/kdf-benchmark.md`: medians at both ends in Chromium, WebKit, Firefox, Node, and the Rust derivation, reproducible with `bench/kdf/run.mjs`; range kept unchanged, constants in `pinveil-core` `protocol.rs` and `web/static` unchanged | accepted (decision, benchmark at 3cf7632) |
 
 ## Web UI
 
@@ -150,8 +150,8 @@ functions use the id in snake case (`inv_14_kdf_range_edges`, `fmt_vectors_...`)
 | 8 plaintext vs blob size | fixed | FMT-outer, WEB-create |
 | 9 empty blob 413 | fixed | HTTP-create |
 | 10 empty pepper silent | fixed | CFG-pepper-warn |
-| 11 403 on a live id | accepted | `ACC-403-live-id` (P2.6) |
+| 11 403 on a live id | accepted | `ACC-403-live-id` (P2.6); documented in `docs/threat-model.md` |
 | 12 HTMX | accepted | n/a (design choice) |
-| 13 consume before delivery, wrong passphrase consumes, ids in logs | accepted | `ACC-wrong-passphrase-consumes` (P3.4, `tests/browser/roundtrip.spec.js`), UI notice tests (P3.2, `WEB-retrieve.warning-before-opening ...`) |
+| 13 consume before delivery, wrong passphrase consumes, ids in logs | accepted | `ACC-wrong-passphrase-consumes` (P3.4, `tests/browser/roundtrip.spec.js`), `WEB-retrieve.lost-in-transit` (P3.4, `tests/browser/robustness.spec.js`), UI notice tests (P3.2, `WEB-retrieve.warning-before-opening ...`), contract `acc_message_ids_appear_in_logs` (P7); documented in `docs/threat-model.md` |
 | 13a restart disclosure | fixed | INV-10 |
 | 14 leftovers | moot | n/a |

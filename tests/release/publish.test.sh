@@ -33,6 +33,13 @@ case "$1 $2" in
   "release create")
     shift 3
     while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do cp "$1" "$state/assets/"; shift; done
+    # The remaining arguments are flags; a notes file is copied so tests can read it.
+    : >"$state/create-flags"
+    while [ $# -gt 0 ]; do
+      echo "$1" >>"$state/create-flags"
+      if [ "$1" = --notes-file ]; then cp "$2" "$state/notes"; fi
+      shift
+    done
     echo true >"$state/state" ;;
   "release upload")
     shift 3
@@ -119,7 +126,21 @@ summary_has "verified: staged assets of v1.2.0"
 for f in "$dist"/pinveil_* "$dist"/pinveil-server_* "$dist/checksums.txt"; do
   cmp -s "$f" "$FAKE/release/assets/$(basename "$f")" || fail "draft lacks $(basename "$f")"
 done
+grep -qxF -- --generate-notes "$FAKE/release/create-flags" || fail "notes are not generated"
+grep -qxF -- --notes-file "$FAKE/release/create-flags" && fail "a notes file was passed for a tag without one"
 ok "stage-release creates a draft with the CLI and server archives and verifies it"
+
+reset stage-notes
+mkdir -p "$root/docs/release-notes"
+notes_file="$root/docs/release-notes/v9.9.9-test.md"
+[ -e "$notes_file" ] && fail "$notes_file already exists"
+echo "## Upgrading from test" >"$notes_file"
+"$publish" stage-release v9.9.9-test true "$dist" || { rm -f "$notes_file"; fail "stage-release with notes failed"; }
+rm -f "$notes_file"
+grep -qxF -- --notes-file "$FAKE/release/create-flags" || fail "the release notes file was not passed"
+grep -qxF -- --generate-notes "$FAKE/release/create-flags" || fail "notes are not generated next to the file"
+grep -qF "Upgrading from test" "$FAKE/release/notes" || fail "the wrong notes file was passed"
+ok "stage-release puts docs/release-notes/<tag>.md above the generated notes"
 
 "$publish" stage-release v1.2.0 false "$dist"
 summary_has "replaced the assets of draft release v1.2.0"
