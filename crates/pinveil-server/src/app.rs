@@ -63,7 +63,9 @@ impl AppState {
         let client_config = ClientConfig::from_config(&config);
         let json = serde_json::to_string(&client_config).expect("client config serializes");
         let client_config_json = assets::script_safe_json(&json);
-        let index_html = INDEX_HTML.replace("{{client_config_json}}", &client_config_json);
+        let index_html = INDEX_HTML
+            .replace("{{version}}", VERSION)
+            .replace("{{client_config_json}}", &client_config_json);
         let uploads = Arc::new(Semaphore::new(config.max_concurrent_uploads));
         let limiter = RateLimiter::new(&config.rate_limit);
         Self {
@@ -76,6 +78,9 @@ impl AppState {
         }
     }
 }
+
+/// The server version, shown in the page footer.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The browser-facing configuration (APP.md, "Client config"). Built from an explicit
 /// allowlist of fields; the server configuration itself is never serialized.
@@ -150,6 +155,7 @@ async fn index_page(State(state): State<Arc<AppState>>) -> Response {
 async fn message_page(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     html(
         MESSAGE_HTML
+            .replace("{{version}}", VERSION)
             .replace("{{client_config_json}}", &state.client_config_json)
             .replace("{{message_id}}", &assets::html_escape(&id)),
     )

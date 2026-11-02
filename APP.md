@@ -31,7 +31,7 @@ This document is the behavior spec for pinveil v1 in Rust: `pinveil-server`, the
 7. A message dies after `max_failed_attempts` wrong PINs (default 3). Each wrong attempt, and the burn, is committed before the response.
 8. A message dies when its TTL runs out, whether or not anyone tried to read it. A retrieval checked after `expiresAt` fails. Physical removal can happen later, during a sweep, so expiry does not mean immediate secure erasure.
 9. All error responses for "gone" states are identical. Expired, already read, burned, and never existed all return the same 404 and body.
-10. The store mode is disclosed to users. In `memory` mode a restart loses every message. In `sqlite` mode messages survive restarts, and deleted data may remain recoverable on disk. Both clients and the docs say which mode a server runs.
+10. The store mode is disclosed to users. In `memory` mode a restart loses every message. In `sqlite` mode messages survive restarts, and deleted data may remain recoverable on disk. The docs, the browser's create page, and both CLI commands say which mode a server runs.
 11. No accounts, no analytics, no third-party scripts. Every browser asset comes from the same origin.
 12. Passphrase generation fails closed. A client that can't get a complete, valid wordlist (7776 distinct entries) refuses to create the message instead of drawing words from whatever it got.
 13. Every error response uses the single JSON shape, including request parsing errors, missing headers or multipart parts, oversized or malformed bodies, unsupported methods or media types, and unknown routes.
@@ -44,13 +44,13 @@ This document is the behavior spec for pinveil v1 in Rust: `pinveil-server`, the
 1. The sender opens `/`.
 2. They type optional text and add zero or more files, by drag-and-drop or a file picker. At least one of the two is required.
 3. The PIN field holds a freshly generated 6-digit PIN. The sender may replace it. They choose an expiry from the configured presets (15 min, 30 min, 1 hour by default) or Custom, entered in minutes within the server's min and max.
-4. On "Generate secure link" the browser:
+4. On "Create secure link" the browser:
    1. Validates the PIN, the file count, the manifest size, and the exact size of the final blob against `maxPayloadBytes`.
    2. Fetches and validates the EFF wordlist (invariant 12), then generates a 4-word passphrase.
    3. Builds the inner payload and encrypts it (see [Cryptography](#cryptography)).
    4. POSTs the blob, PIN, and TTL to `/api/messages`.
 5. The server returns the message id and expiry time.
-6. The browser shows `https://<origin>/message/<id>#<passphrase>` and the PIN, each with a copy button, plus the local expiry time. It tells the sender to send the link and the PIN over different channels, and states the store mode.
+6. The browser shows `https://<origin>/message/<id>#<passphrase>` and the PIN, each with a copy button, plus the local expiry time. It tells the sender to send the link and the PIN over different channels. The full link is visible, wrapped if needed. The store mode stays reachable through "How it works".
 
 ### Retrieve in the browser
 
@@ -433,11 +433,14 @@ The server writes one line per request to stderr: method, path, status, and dura
 - The wordlist is validated after every fetch: the HTTP status, 7776 entries, all distinct and well formed.
 - "Download all" builds a store-only zip in the browser (method 0, CRC-32, UTF-8 names), following PKWARE APPNOTE, from the already decrypted files. Nothing goes to the server. The text stays separately copyable and isn't part of the zip.
 - File names follow the [export name policy](#export-names), both in the zip and as single downloads. The original names are displayed as plain text.
-- Both pages show the store mode. The retrieve page explains that opening deletes the message (see [Retrieve in the browser](#retrieve-in-the-browser)), and that a dropped connection after opening loses it.
+- The create page states the store mode in its "How it works" dialog, opened from the page footer. The recipient can't act on it, so the retrieve page doesn't.
+- The retrieve page says in one line, before the PIN is submitted, that opening deletes the message even if it can't be read (see [Retrieve in the browser](#retrieve-in-the-browser)). Its "How it works" dialog adds that a dropped connection after opening loses the message.
 - The create page checks every limit from the files' names, types, and sizes before reading any file. A browser that reports no usable MIME type records `application/octet-stream`. The multipart part carrying the blob always has the filename `blob`.
 - Single downloads and the zip (`pinveil-files.zip`) are saved as `application/octet-stream`, so a stored MIME type can never make the browser render a file.
 - Without a fragment, the retrieve page disables the PIN form, so the message can't be consumed by a link that can't decrypt it.
 - Once the server answers 200, the retrieve page treats the message as consumed. If the body then fails to arrive, or the message can't be opened, it says the message is gone and offers no retry.
+- Both pages have a theme button that cycles System, Light, and Dark. System follows the OS. The choice is kept in that browser's local storage; without storage it lasts until the page is left. A classic script in `<head>` applies it before the first paint, since the CSP allows no inline script.
+- Both footers show the server version, rendered from the server's package version. The header links to the source repository in a new tab, so a revealed message isn't navigated away from.
 - The expiry list holds every preset plus the default when the default isn't a preset, so the advertised default is always selected first, even with no presets. Custom (whole minutes) appears only when at least one whole minute fits the server's range.
 
 ## CLI

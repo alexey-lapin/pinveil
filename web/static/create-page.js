@@ -29,9 +29,11 @@ export function initCreatePage() {
     let files = [];
 
     $("store-notice").textContent = storeModeNotice(config.storeMode);
-    $("result-store-notice").textContent = storeModeNotice(config.storeMode);
+    // The limit covers the whole encrypted message, text and overhead included.
     $("file-limits").textContent =
-        `Up to ${config.maxFiles} files, ${formatBytes(config.maxPayloadBytes)} in total. Names and types are encrypted too.`;
+        `Up to ${config.maxFiles} files · ${formatBytes(config.maxPayloadBytes)} max message size`;
+    const messageText = $("message-text");
+    const fitText = initAutoGrow(messageText);
     pinInput.value = generatePin();
     $("new-pin-button").addEventListener("click", () => {
         pinInput.value = generatePin();
@@ -46,17 +48,22 @@ export function initCreatePage() {
                 const name = document.createElement("span");
                 name.className = "file-name";
                 name.textContent = file.name;
+                name.title = file.name;
                 const size = document.createElement("span");
                 size.className = "file-size";
                 size.textContent = formatBytes(file.size);
                 const remove = document.createElement("button");
                 remove.type = "button";
                 remove.className = "file-clear-btn";
-                remove.textContent = "Remove";
+                remove.innerHTML = REMOVE_ICON;
+                remove.title = "Remove";
                 remove.setAttribute("aria-label", `Remove ${file.name}`);
                 remove.addEventListener("click", () => {
                     files = files.filter((_, i) => i !== index);
                     renderFiles();
+                    // Focus moves to the next file's remove button, else the previous one, else Browse.
+                    const buttons = $("file-list").querySelectorAll(".file-clear-btn");
+                    (buttons[Math.min(index, buttons.length - 1)] ?? $("browse-button")).focus();
                 });
                 item.append(name, size, remove);
                 return item;
@@ -81,13 +88,15 @@ export function initCreatePage() {
     $("create-another-button").addEventListener("click", () => {
         files = [];
         renderFiles();
-        $("message-text").value = "";
+        messageText.value = "";
+        fitText();
         $("share-url").value = "";
         $("share-pin").value = "";
         pinInput.value = generatePin();
         $("result-ready").classList.add("hidden");
         $("create-inputs").classList.remove("hidden");
         setFeedback(status, "", null);
+        messageText.focus();
     });
 
     form.addEventListener("submit", async (event) => {
@@ -96,11 +105,13 @@ export function initCreatePage() {
         try {
             const created = await create({ text: $("message-text").value, files, pin: pinInput.value.trim() }, status);
             $("share-url").value = created.url;
+            fitShareLink();
             $("share-pin").value = created.pin;
             $("expiry-label").textContent = `Expires ${new Date(created.expiresAt).toLocaleString()}`;
             $("create-inputs").classList.add("hidden");
             $("result-ready").classList.remove("hidden");
             setFeedback(status, "", null);
+            $("result-title").focus();
         } catch (error) {
             setFeedback(status, createErrorText(error, config), "error");
         } finally {
@@ -188,15 +199,51 @@ function selectedTtl() {
     return select.value === "custom" ? ttlFromMinutes($("custom-ttl-minutes").value, config) : Number(select.value);
 }
 
+const REMOVE_ICON =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+
+/** Sizes the link box to the whole link where `field-sizing: content` is missing. */
+function fitShareLink() {
+    const box = $("share-url");
+    if (!CSS.supports("field-sizing", "content")) {
+        box.style.height = "auto";
+        box.style.height = `${box.scrollHeight + 2}px`;
+    }
+}
+
+/**
+ * Grows the textarea with its content, up to the max-height in the CSS, then it scrolls.
+ * Browsers with `field-sizing: content` do this in CSS alone. Returns a refit function.
+ */
+function initAutoGrow(textarea) {
+    if (CSS.supports("field-sizing", "content")) {
+        return () => {};
+    }
+    const fit = () => {
+        textarea.style.height = "auto";
+        textarea.style.height = `${textarea.scrollHeight + 2}px`;
+    };
+    textarea.addEventListener("input", fit);
+    window.addEventListener("resize", fit);
+    fit();
+    return fit;
+}
+
 function initFileDrop(addFiles) {
     const input = $("message-files");
     const zone = $("file-drop");
+    $("browse-button").addEventListener("click", () => input.click());
     input.addEventListener("change", () => {
         addFiles([...input.files]);
         // Clearing lets the same file be picked again after a removal.
         input.value = "";
     });
+    // The zone is the whole form: only file drags are ours, so text still drops into the textarea.
+    const carriesFiles = (event) => [...event.dataTransfer.types].includes("Files");
     zone.addEventListener("dragover", (event) => {
+        if (!carriesFiles(event)) {
+            return;
+        }
         event.preventDefault();
         zone.classList.add("drag-over");
     });
@@ -206,6 +253,9 @@ function initFileDrop(addFiles) {
         }
     });
     zone.addEventListener("drop", (event) => {
+        if (!carriesFiles(event)) {
+            return;
+        }
         event.preventDefault();
         zone.classList.remove("drag-over");
         addFiles([...event.dataTransfer.files]);

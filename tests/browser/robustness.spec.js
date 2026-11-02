@@ -127,3 +127,46 @@ test.describe("WEB-create.check-before-read", () => {
         expect(apiRequests(sent())).toHaveLength(0);
     });
 });
+
+/** Fails if the page scrolls sideways or any of `selectors` reaches past the viewport. */
+async function expectFits(page, selectors) {
+    const width = page.viewportSize().width;
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    for (const selector of selectors) {
+        const box = await page.locator(selector).boundingBox();
+        expect(box, selector).not.toBeNull();
+        expect(box.x + box.width, selector).toBeLessThanOrEqual(width);
+    }
+}
+
+test("WEB-layout.reflow every screen fits 320 CSS pixels without sideways scrolling", async ({ page, context, server }) => {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.goto(`${server.url}/`);
+    await expectFits(page, ["#pin", "#new-pin-button", "#ttl-preset", "#submit-button"]);
+    const { link, pin } = await createMessage(page, server, { text: "narrow" });
+    await expectFits(page, ["#share-url", "#copy-url-button", "#share-pin", "#copy-pin-button"]);
+
+    const reader = await context.newPage();
+    await reader.setViewportSize({ width: 320, height: 800 });
+    await reader.goto(link);
+    await expectFits(reader, ["#retrieve-pin", "#retrieve-button"]);
+    await openMessage(reader, link, pin);
+    await expect(reader.locator("#message-output")).toHaveText("narrow");
+    await expectFits(reader, ["#message-output", "#copy-text-button"]);
+});
+
+test("WEB-layout.copy-fallback keeps the result screen within a phone's width", async ({ page, server }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, "clipboard", {
+            value: { writeText: async () => Promise.reject(new DOMException("Denied", "NotAllowedError")) },
+            configurable: true,
+        });
+    });
+    await createMessage(page, server, { text: "fallback" });
+    for (const id of ["#copy-url-button", "#copy-pin-button"]) {
+        await page.locator(id).click();
+        await expect(page.locator(id)).toHaveText(/Selected/);
+        await expectFits(page, [id]);
+    }
+});

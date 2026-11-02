@@ -133,7 +133,7 @@ export function storeModeNotice(mode) {
 }
 
 export const OPEN_WARNING =
-    "Opening deletes the message from the server, even if it then can't be decrypted, for example because the link is incomplete. Keep this page open until you have saved what you need: if the connection drops after opening, the message is lost.";
+    "Opening deletes it from the server, even if it can't be read. Keep this page open until you've saved it.";
 
 /** Recipient-facing text for a failed retrieve request. */
 export function retrieveErrorText(status, serverMessage) {
