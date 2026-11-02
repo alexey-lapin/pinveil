@@ -5,7 +5,7 @@
 # SQLite store, mount a volume at /data and set PINVEIL_STORE__MODE=sqlite and
 # PINVEIL_STORE__PATH=/data/pinveil.db. Always set PINVEIL_PIN__PEPPER.
 
-FROM busybox:1.37.0 AS data
+FROM busybox:1.38.0 AS data
 RUN mkdir -p /data && chown 65532:65532 /data
 
 FROM scratch
