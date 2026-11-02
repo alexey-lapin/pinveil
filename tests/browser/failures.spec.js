@@ -78,7 +78,8 @@ test.describe("limits come from the server's config", () => {
     test("WEB-create.limits-from-config file count over the server's max is refused", async ({ page }) => {
         const sent = recorder(small);
         await page.goto(`${small.url}/`);
-        await expect(page.locator("#file-limits")).toBeHidden();
+        // The limits show before any file is picked.
+        await expect(page.locator("#file-limits")).toContainText("Up to 2 files");
         await page.locator("#message-files").setInputFiles([file("a", "1"), file("b", "2"), file("c", "3")]);
         await expect(page.locator("#file-limits")).toContainText("Up to 2 files");
         await page.locator("#submit-button").click();

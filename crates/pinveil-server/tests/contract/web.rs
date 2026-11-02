@@ -81,6 +81,9 @@ async fn http_pages_render_for_any_id_with_the_id_escaped() {
     );
 }
 
+/// The one off-origin URL on the pages: the header link to the source, as `href="..."` closes it.
+const SOURCE_LINK: &str = "https://github.com/alexey-lapin/pinveil\"";
+
 #[tokio::test]
 async fn inv_11_pages_load_only_same_origin_assets() {
     let server = Server::start().await;
@@ -89,6 +92,11 @@ async fn inv_11_pages_load_only_same_origin_assets() {
         for attr in [r#"src=""#, r#"href=""#] {
             for (i, _) in html.match_indices(attr) {
                 let value = &html[i + attr.len()..];
+                // A link the user follows loads nothing into the page; only the source link is allowed.
+                let tag = &html[html[..i].rfind('<').unwrap()..i];
+                if tag.starts_with("<a ") && value.starts_with(SOURCE_LINK) {
+                    continue;
+                }
                 assert!(
                     value.starts_with('/') && !value.starts_with("//"),
                     "{path}: {}",

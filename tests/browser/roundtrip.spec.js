@@ -158,11 +158,16 @@ test("WEB-create.copy-controls, the two-channel warning, and the store notice on
     await page.goto(`${server.url}/`);
     await expect(page.locator("#store-notice")).toContainText("memory only");
     await createMessage(page, server, { text: "copy me" });
-    await expect(page.locator("#result-ready")).toContainText("Send the link and the PIN separately");
-    // The store notice is in the footer, so it stays visible next to the result.
+    await expect(page.locator("#result-ready")).toContainText("Send the link and the PIN through different channels");
+    // The store notice is in "How it works", which stays reachable next to the result.
+    await page.locator("footer [data-open-dialog]").click();
     await expect(page.locator("#store-notice")).toBeVisible();
     await expect(page.locator("#store-notice")).toContainText("restart deletes every message");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#about-dialog")).toBeHidden();
     await expect(page.locator("#expiry-label")).toContainText("Expires");
+    // The whole link is shown, not scrolled out of a one-line field.
+    expect(await page.locator("#share-url").evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBe(true);
     for (const id of ["#copy-url-button", "#copy-pin-button"]) {
         await page.locator(id).click();
         // Either copied, or (without clipboard permission) the field is selected for a manual copy.
@@ -191,7 +196,9 @@ test("WEB-retrieve.warning-before-opening and a wrong PIN can be retried", async
     await expect(reader.locator("#open-warning")).toContainText("Opening deletes it from the server, even if it can't be read");
     await expect(reader.locator("#open-warning")).toContainText("Keep this page open");
     // The longer explanation, including a dropped connection, is in "How it works".
-    await expect(reader.locator("footer details")).toContainText("connection drops");
+    await reader.locator("footer [data-open-dialog]").click();
+    await expect(reader.locator("#about-dialog")).toContainText("connection drops");
+    await reader.keyboard.press("Escape");
     const wrongPin = pin === "000000" ? "111111" : "000000";
     await reader.locator("#retrieve-pin").fill(wrongPin);
     await reader.locator("#retrieve-button").click();
@@ -199,4 +206,29 @@ test("WEB-retrieve.warning-before-opening and a wrong PIN can be retried", async
     await reader.locator("#retrieve-pin").fill(pin);
     await reader.locator("#retrieve-button").click();
     await expect(reader.locator("#message-output")).toHaveText("retry");
+});
+
+test("WEB-theme cycles System, Light, and Dark, and the choice survives a reload", async ({ page, server }) => {
+    await page.goto(`${server.url}/`);
+    const button = page.locator("#theme-button");
+    const theme = () => page.evaluate(() => document.documentElement.dataset.theme ?? "system");
+    expect(await theme()).toBe("system");
+    await expect(button).toHaveAttribute("aria-label", "Theme: System. Switch to Light.");
+    await button.click();
+    expect(await theme()).toBe("light");
+    await button.click();
+    expect(await theme()).toBe("dark");
+    await expect(button).toHaveAttribute("aria-label", "Theme: Dark. Switch to System.");
+    await page.reload();
+    expect(await theme()).toBe("dark");
+    await page.locator("#theme-button").click();
+    expect(await theme()).toBe("system");
+});
+
+test("WEB-footer shows the server version and the source link on both pages", async ({ page, server }) => {
+    await page.goto(`${server.url}/`);
+    await expect(page.locator("footer .version")).toHaveText(/^v\d+\.\d+\.\d+/);
+    await expect(page.locator('a[href="https://github.com/alexey-lapin/pinveil"]')).toHaveAttribute("rel", "noopener noreferrer");
+    await page.goto(`${server.url}/message/any-id#words`);
+    await expect(page.locator("footer .version")).toHaveText(/^v\d+\.\d+\.\d+/);
 });

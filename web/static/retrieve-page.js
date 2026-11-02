@@ -54,7 +54,9 @@ export function initRetrievePage() {
 
         // A 200 means the server has deleted the message. Nothing after this point can be retried.
         form.classList.add("hidden");
-        $("retrieve-intro").classList.add("hidden");
+        $("retrieve-title").textContent = "Here's your secret";
+        $("open-warning").classList.add("hidden");
+        $("retrieve-title").focus();
         let blob;
         try {
             blob = new Uint8Array(await response.arrayBuffer());

@@ -37,6 +37,7 @@ pub static STATIC: &[Asset] = &[
     web_static!("protocol.js", JS),
     web_static!("random.js", JS),
     web_static!("retrieve-page.js", JS),
+    web_static!("theme.js", JS),
     web_static!("ui.js", JS),
     web_static!("wordlist.js", JS),
     web_static!("zip.js", JS),
@@ -47,9 +48,9 @@ pub static STATIC: &[Asset] = &[
     },
 ];
 
-/// The create page template, with `{{client_config_json}}`.
+/// The create page template, with `{{version}}` and `{{client_config_json}}`.
 pub const INDEX_HTML: &str = include_str!("../../../web/pages/index.html");
-/// The retrieve page template, with `{{client_config_json}}` and `{{message_id}}`.
+/// The retrieve page template, with `{{version}}`, `{{client_config_json}}`, and `{{message_id}}`.
 pub const MESSAGE_HTML: &str = include_str!("../../../web/pages/message.html");
 
 #[must_use]
