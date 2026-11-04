@@ -1,4 +1,4 @@
-//! Generators for passphrases, PINs, and message ids.
+//! Generators for passphrases and PINs. Message ids come from [`crate::id_template`].
 
 use zeroize::Zeroizing;
 
@@ -32,31 +32,7 @@ pub fn is_valid_pin(pin: &str) -> bool {
     pin.len() == PIN_DIGITS && pin.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// A message id such as `barcode-unbalance-cloak-102856`: `words` random words and a
-/// zero-padded number with `digits` digits.
-///
-/// # Panics
-///
-/// If `digits` is not between 1 and 9.
-pub fn message_id(
-    wordlist: &Wordlist<'_>,
-    entropy: &mut impl Entropy,
-    words: usize,
-    digits: u32,
-) -> Result<String, EntropyError> {
-    assert!(
-        (1..=9).contains(&digits),
-        "message id digits must be 1 to 9"
-    );
-    let mut parts = random_words(wordlist, entropy, words)?;
-    let number = uniform_below(entropy, 10u32.pow(digits))?;
-    let width = digits as usize;
-    let suffix = format!("{number:0width$}");
-    parts.push(&suffix);
-    Ok(parts.join("-"))
-}
-
-fn random_words<'a>(
+pub(crate) fn random_words<'a>(
     wordlist: &Wordlist<'a>,
     entropy: &mut impl Entropy,
     count: usize,
@@ -69,7 +45,7 @@ fn random_words<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_pin, message_id, passphrase, pin};
+    use super::{is_valid_pin, passphrase, pin};
     use crate::entropy::{EntropyError, ReplayEntropy, SystemEntropy};
     use crate::wordlist::Wordlist;
 
@@ -114,19 +90,5 @@ mod tests {
             passphrase(&list, &mut ReplayEntropy::of_u32s(&[0, 1])).unwrap_err(),
             EntropyError
         );
-    }
-
-    #[test]
-    fn srv_ids_message_id_format() {
-        let list = Wordlist::embedded().unwrap();
-        let mut entropy = ReplayEntropy::of_u32s(&[0, 1, 2, 42]);
-        assert_eq!(
-            message_id(&list, &mut entropy, 3, 6).unwrap(),
-            "abacus-abdomen-abdominal-000042"
-        );
-        let id = message_id(&list, &mut SystemEntropy, 3, 6).unwrap();
-        let parts: Vec<_> = id.rsplitn(2, '-').collect();
-        assert_eq!(parts[0].len(), 6);
-        assert!(parts[0].bytes().all(|b| b.is_ascii_digit()));
     }
 }

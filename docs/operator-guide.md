@@ -92,6 +92,37 @@ ones you are most likely to change:
 | `rate_limit.create_per_window`, `retrieve_per_window` | 10, 30 per minute | Per client address. |
 | `messages.pbkdf2_iterations` | 600,000 | Client-side key derivation cost for new messages, from 600,000 to 2,000,000. See [the KDF benchmark](kdf-benchmark.md). |
 
+### Message ids
+
+`message_id.template` sets the shape of message ids. The default, `{word:3}-{digits:6}`,
+gives ids such as `barcode-unbalance-cloak-102856`.
+
+| Placeholder | Produces | Bits |
+|---|---|---|
+| `{word}`, `{word:N}` | N EFF words joined with `-` | 12.9 per word |
+| `{digits:N}` | N digits | 3.3 per digit |
+| `{alnum:N}` | N characters from `a-z0-9` | 5.2 per character |
+| `{Alnum:N}` | N characters from `A-Za-z0-9` | 6.0 per character |
+
+```toml
+[message_id]
+template = "msg_{alnum:10}"   # msg_k7q2x8f2m4, 51.7 bits
+min_bits = 32
+```
+
+N is 1 to 64. Text between placeholders may use only `A-Z a-z 0-9 - . _ ~`. The template can
+be at most 256 bytes, and its longest possible id at most 128 characters. The server logs the
+template's bits at startup and refuses to start when they fall below `min_bits`. It also
+warns when the template allows fewer than 1000 ids per `store.max_messages`.
+
+A template close to the 32-bit floor can be guessed at scale: with 1,000 live messages, about
+4.3 million guesses find one of them, and the 403 for a wrong PIN tells the guesser the id is
+live. Rate limits slow this down but don't stop a patient attacker. Keep the default unless
+you need something else, and stay well above the floor.
+
+Changing the template doesn't affect stored messages: their links keep working. Ids with
+uppercase letters or `. _ ~` need a `pinveil` CLI newer than 0.1.0; 0.1.0 rejects those links.
+
 The server checks the configuration at startup and refuses to start if something can't
 work: presets outside the TTL range, a missing `store.path` in `sqlite` mode, an Argon2
 memory budget smaller than one hash, or limits the browser's zip writer can't handle.
@@ -220,8 +251,9 @@ The CLI's `--insecure-http` flag allows plain HTTP only to a loopback IP address
 The server logs one line per request to stderr: method, path, status, and duration. It never
 logs headers, query strings, or bodies, so PINs and message content stay out of the logs.
 
-The path of a retrieval contains the message id. Ids are random (about 58 bits) and can't be
-guessed, but the log shows when someone tried to open each message. The create request's line
+The path of a retrieval contains the message id. Ids are random (about 58.7 bits with the
+default template) and can't be guessed, but the log shows when someone tried to open each
+message. The create request's line
 has no id. Keep access logs, including your proxy's, as private as the server.
 
 `PINVEIL_LOG` sets the level, with `tracing` filter syntax: `warn`, `info` (default), or

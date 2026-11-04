@@ -16,7 +16,7 @@ use crate::config::{Config, ttl_label};
 use crate::error::{ApiError, error_response, message_for_status};
 use crate::pin::Argon2Verifier;
 use crate::ratelimit::RateLimiter;
-use crate::service::{HashPool, Parts, Policy, Service, SystemClock, WordIds};
+use crate::service::{HashPool, Parts, Policy, Service, SystemClock, TemplateIds};
 use crate::store::Store;
 use pinveil_core::wordlist::Wordlist;
 use tokio::sync::Semaphore;
@@ -35,7 +35,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// The production state: the configured store, Argon2 verifier, system clock, diceware
+    /// The production state: the configured store, Argon2 verifier, system clock, template
     /// ids.
     #[must_use]
     pub fn new(config: Config, wordlist: Wordlist<'static>, store: Arc<dyn Store>) -> Self {
@@ -47,10 +47,9 @@ impl AppState {
                 config.pin.max_queued_hashes,
             ),
             clock: Arc::new(SystemClock),
-            ids: Arc::new(WordIds::new(
+            ids: Arc::new(TemplateIds::new(
                 wordlist,
-                config.message_id.words,
-                config.message_id.digits,
+                config.message_id.template.clone(),
             )),
             policy: Policy::from_config(&config),
         });

@@ -67,7 +67,7 @@ covers it too. The generator's doc comment states that it depends on this proper
 
 ## Components
 
-- **`pinveil-core::generate`**:
+- **`pinveil-core::id_template`** (a new module; `generate` keeps passphrases and PINs):
   - `IdTemplate::parse(&str, &Wordlist) -> Result<IdTemplate, TemplateError>` is the only
     constructor, and the segments stay private.
   - `IdTemplate::bits()` and `IdTemplate::max_len()` report the template's strength and longest id.
@@ -75,7 +75,8 @@ covers it too. The generator's doc comment states that it depends on this proper
   - Segments are `Literal(String) | Words(n) | Digits(n) | Alnum { len, upper }`.
   - Every character and word is drawn with `uniform_below`. Digits are drawn one at a time, which
     lifts the old 9-digit cap.
-  - `message_id(words, digits)` is replaced.
+  - `generate::message_id(words, digits)` is removed. `is_valid_id` holds the shared id
+    alphabet check that the CLI uses.
 - **`pinveil-core::wordlist`**: `Wordlist::parse` enforces the prefix-free check.
 - **`pinveil-server::config`**:
   - `MessageIdConfig { template: IdTemplate, min_bits: u32 }` gets the two new keys, the old-key

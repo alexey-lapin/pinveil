@@ -8,6 +8,7 @@ pub mod entropy;
 pub mod envelope;
 pub mod export_names;
 pub mod generate;
+pub mod id_template;
 pub mod payload;
 pub mod protocol;
 pub mod wordlist;

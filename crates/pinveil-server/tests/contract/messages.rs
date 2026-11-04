@@ -7,7 +7,7 @@ use reqwest::multipart::{Form, Part};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::harness::{Server, assert_error, assert_security_headers};
+use crate::harness::{Server, assert_error, assert_security_headers, refuses_to_start};
 
 const PIN: &str = "123456";
 
@@ -520,4 +520,46 @@ async fn http_create_longest_allowed_ttl_has_a_valid_expiry() {
     let body: Value = response.json().await.unwrap();
     let expires = body["expiresAt"].as_str().unwrap();
     assert!(humantime::parse_rfc3339(expires).is_ok(), "{expires}");
+}
+
+#[tokio::test]
+async fn http_custom_template_ids_round_trip() {
+    let template = "Id.{Alnum:12}_x~{word}-{digits:4}";
+    let server = Server::start_with(&[("PINVEIL_MESSAGE_ID__TEMPLATE", template)]).await;
+    let id = create(&server, b"custom id", "600").await;
+    let rest = id.strip_prefix("Id.").expect(&id);
+    let (alnum, rest) = rest.split_at(12);
+    assert!(alnum.bytes().all(|b| b.is_ascii_alphanumeric()), "{id}");
+    let (word, digits) = rest
+        .strip_prefix("_x~")
+        .expect(&id)
+        .rsplit_once('-')
+        .expect(&id);
+    assert!(!word.is_empty() && digits.len() == 4, "{id}");
+
+    let page = server.get(&format!("/message/{id}")).await;
+    assert_eq!(page.status(), 200);
+    assert!(
+        page.text()
+            .await
+            .unwrap()
+            .contains(&format!("data-message-id=\"{id}\""))
+    );
+    let got = retrieve(&server, &id, Some(PIN)).await;
+    assert_eq!(got.status(), 200);
+    assert_eq!(got.bytes().await.unwrap().as_ref(), b"custom id");
+}
+
+#[tokio::test]
+async fn cfg_removed_message_id_keys_refuse_to_start() {
+    let stderr = refuses_to_start(&[("PINVEIL_MESSAGE_ID__WORDS", "4")]).await;
+    assert!(
+        stderr.contains("message_id.words (from PINVEIL_MESSAGE_ID__WORDS) was removed"),
+        "{stderr}"
+    );
+    let stderr = refuses_to_start(&[("PINVEIL_MESSAGE_ID__TEMPLATE", "{digits:6}")]).await;
+    assert!(
+        stderr.contains("below message_id.min_bits = 32"),
+        "{stderr}"
+    );
 }
