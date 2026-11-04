@@ -12,7 +12,7 @@ pub const EMBEDDED_TEXT: &str = include_str!("../../../assets/eff_large_wordlist
 /// A validated wordlist: exactly [`WORDLIST_LEN`] distinct, well-formed words, none of which
 /// is a prefix of another. Message id entropy relies on the last property
 /// ([`crate::id_template`]).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wordlist<'a> {
     words: Vec<&'a str>,
 }

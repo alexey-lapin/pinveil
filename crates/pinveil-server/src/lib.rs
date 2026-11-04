@@ -47,10 +47,10 @@ pub async fn serve(
     config: Config,
     store: Arc<dyn Store>,
 ) -> std::io::Result<()> {
-    // Invariant 12: never serve or use a wordlist that fails validation.
-    let wordlist = Wordlist::embedded()
-        .map_err(|e| std::io::Error::other(format!("embedded wordlist: {e}")))?;
-    let state = Arc::new(AppState::new(config, wordlist, store));
+    // Invariant 12: never serve or use a wordlist that fails validation. Config loading
+    // already validated it for the id template; this guards the served copy too.
+    Wordlist::embedded().map_err(|e| std::io::Error::other(format!("embedded wordlist: {e}")))?;
+    let state = Arc::new(AppState::new(config, store));
     let service = Arc::clone(&state.service);
     // The first tick fires at once: a startup sweep, then one every interval.
     tokio::spawn(async move {

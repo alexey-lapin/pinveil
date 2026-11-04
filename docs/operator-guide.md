@@ -251,10 +251,10 @@ The CLI's `--insecure-http` flag allows plain HTTP only to a loopback IP address
 The server logs one line per request to stderr: method, path, status, and duration. It never
 logs headers, query strings, or bodies, so PINs and message content stay out of the logs.
 
-The path of a retrieval contains the message id. Ids are random (about 58.7 bits with the
-default template) and can't be guessed, but the log shows when someone tried to open each
-message. The create request's line
-has no id. Keep access logs, including your proxy's, as private as the server.
+The path of a retrieval contains the message id. Ids are random, and with the default
+template (about 58.7 bits) they can't be guessed; how hard a custom template is to guess
+depends on its bits (see [Message ids](#message-ids)). The log shows when someone tried to
+open each message. The create request's line has no id. Keep access logs, including your proxy's, as private as the server.
 
 `PINVEIL_LOG` sets the level, with `tracing` filter syntax: `warn`, `info` (default), or
 `pinveil_server=debug`.

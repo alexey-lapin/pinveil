@@ -18,7 +18,6 @@ use crate::pin::Argon2Verifier;
 use crate::ratelimit::RateLimiter;
 use crate::service::{HashPool, Parts, Policy, Service, SystemClock, TemplateIds};
 use crate::store::Store;
-use pinveil_core::wordlist::Wordlist;
 use tokio::sync::Semaphore;
 
 /// Shared state for every handler.
@@ -38,7 +37,7 @@ impl AppState {
     /// The production state: the configured store, Argon2 verifier, system clock, template
     /// ids.
     #[must_use]
-    pub fn new(config: Config, wordlist: Wordlist<'static>, store: Arc<dyn Store>) -> Self {
+    pub fn new(config: Config, store: Arc<dyn Store>) -> Self {
         let service = Service::new(Parts {
             store,
             verifier: Arc::new(Argon2Verifier::new(&config.pin)),
@@ -47,10 +46,7 @@ impl AppState {
                 config.pin.max_queued_hashes,
             ),
             clock: Arc::new(SystemClock),
-            ids: Arc::new(TemplateIds::new(
-                wordlist,
-                config.message_id.template.clone(),
-            )),
+            ids: Arc::new(TemplateIds::new(config.message_id.template.clone())),
             policy: Policy::from_config(&config),
         });
         Self::with_service(config, service)

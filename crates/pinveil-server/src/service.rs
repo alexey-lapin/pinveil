@@ -18,7 +18,6 @@ use pinveil_core::entropy::{Entropy, EntropyError, SystemEntropy};
 use pinveil_core::generate::is_valid_pin;
 use pinveil_core::id_template::IdTemplate;
 use pinveil_core::protocol::PROTOCOL_VERSION;
-use pinveil_core::wordlist::Wordlist;
 use tokio::sync::{Mutex, MutexGuard, Semaphore};
 
 use crate::config::Config;
@@ -49,22 +48,22 @@ pub trait IdSource: Send + Sync + 'static {
     fn next_id(&self) -> Result<String, EntropyError>;
 }
 
-/// Ids from the configured template, the validated wordlist, and the system CSPRNG.
+/// Ids from the configured template (which carries its validated wordlist) and the system
+/// CSPRNG.
 pub struct TemplateIds {
-    wordlist: Wordlist<'static>,
-    template: IdTemplate,
+    template: IdTemplate<'static>,
 }
 
 impl TemplateIds {
     #[must_use]
-    pub fn new(wordlist: Wordlist<'static>, template: IdTemplate) -> Self {
-        Self { wordlist, template }
+    pub fn new(template: IdTemplate<'static>) -> Self {
+        Self { template }
     }
 }
 
 impl IdSource for TemplateIds {
     fn next_id(&self) -> Result<String, EntropyError> {
-        self.template.generate(&self.wordlist, &mut SystemEntropy)
+        self.template.generate(&mut SystemEntropy)
     }
 }
 

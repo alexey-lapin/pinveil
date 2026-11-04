@@ -49,12 +49,24 @@ enum Segment {
     Alnum { len: u8, upper: bool },
 }
 
-/// A validated id template. Only [`IdTemplate::parse`] builds one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdTemplate {
+/// A validated id template, bound to the wordlist it was validated against so generation
+/// can't exceed the checked length. Only [`IdTemplate::parse`] builds one.
+#[derive(Clone, PartialEq, Eq)]
+pub struct IdTemplate<'a> {
     source: String,
     segments: Vec<Segment>,
     max_len: usize,
+    wordlist: Wordlist<'a>,
+}
+
+// Hand-written so debug output shows the template, not 7776 words.
+impl fmt::Debug for IdTemplate<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IdTemplate")
+            .field("source", &self.source)
+            .field("max_len", &self.max_len)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a template was refused. `offset` is the byte offset in the template, when the problem
@@ -83,10 +95,10 @@ fn fail<T>(offset: Option<usize>, reason: impl Into<String>) -> Result<T, Templa
     })
 }
 
-impl IdTemplate {
-    /// Parses and validates `text`. `wordlist` sets the longest possible word, which bounds
-    /// the worst-case id length.
-    pub fn parse(text: &str, wordlist: &Wordlist<'_>) -> Result<Self, TemplateError> {
+impl<'a> IdTemplate<'a> {
+    /// Parses and validates `text`. The template keeps `wordlist`: its longest word bounds
+    /// the worst-case id length, and generation draws from it.
+    pub fn parse(text: &str, wordlist: Wordlist<'a>) -> Result<Self, TemplateError> {
         if text.len() > MAX_TEMPLATE_BYTES {
             return fail(
                 None,
@@ -158,6 +170,7 @@ impl IdTemplate {
             source: text.to_owned(),
             segments,
             max_len,
+            wordlist,
         })
     }
 
@@ -190,17 +203,13 @@ impl IdTemplate {
     }
 
     /// A random id. Every word and character is drawn uniformly from `entropy`.
-    pub fn generate(
-        &self,
-        wordlist: &Wordlist<'_>,
-        entropy: &mut impl Entropy,
-    ) -> Result<String, EntropyError> {
+    pub fn generate(&self, entropy: &mut impl Entropy) -> Result<String, EntropyError> {
         let mut id = String::with_capacity(self.max_len);
         for segment in &self.segments {
             match segment {
                 Segment::Literal(text) => id.push_str(text),
                 Segment::Words(n) => {
-                    id.push_str(&random_words(wordlist, entropy, usize::from(*n))?.join("-"));
+                    id.push_str(&random_words(&self.wordlist, entropy, usize::from(*n))?.join("-"));
                 }
                 Segment::Digits(n) => push_chars(&mut id, entropy, *n, b"0123456789")?,
                 Segment::Alnum { len, upper: false } => {
@@ -290,21 +299,18 @@ mod tests {
         DEFAULT_TEMPLATE, IdTemplate, MAX_ID_LEN, MAX_TEMPLATE_BYTES, TemplateError, is_valid_id,
     };
     use crate::entropy::{EntropyError, ReplayEntropy, SystemEntropy};
-    use crate::wordlist::Wordlist;
+    use crate::wordlist::{EMBEDDED_TEXT, Wordlist};
 
     type Allowed = fn(u8) -> bool;
 
-    fn parse(text: &str) -> Result<IdTemplate, TemplateError> {
-        IdTemplate::parse(text, &Wordlist::embedded().unwrap())
+    fn parse(text: &str) -> Result<IdTemplate<'static>, TemplateError> {
+        IdTemplate::parse(text, Wordlist::embedded().unwrap())
     }
 
     fn generate(text: &str, draws: &[u32]) -> String {
         parse(text)
             .unwrap()
-            .generate(
-                &Wordlist::embedded().unwrap(),
-                &mut ReplayEntropy::of_u32s(draws),
-            )
+            .generate(&mut ReplayEntropy::of_u32s(draws))
             .unwrap()
     }
 
@@ -318,10 +324,9 @@ mod tests {
             generate(DEFAULT_TEMPLATE, &[0, 1, 2, 0, 0, 0, 0, 4, 2]),
             "abacus-abdomen-abdominal-000042"
         );
-        let list = Wordlist::embedded().unwrap();
         let template = parse(DEFAULT_TEMPLATE).unwrap();
         for _ in 0..200 {
-            let id = template.generate(&list, &mut SystemEntropy).unwrap();
+            let id = template.generate(&mut SystemEntropy).unwrap();
             let (words, number) = id.rsplit_once('-').unwrap();
             assert_eq!(number.len(), 6);
             assert!(number.bytes().all(|b| b.is_ascii_digit()));
@@ -360,7 +365,6 @@ mod tests {
 
     #[test]
     fn outputs_stay_in_their_alphabets() {
-        let list = Wordlist::embedded().unwrap();
         let cases: [(&str, Allowed); 3] = [
             ("{digits:64}", |b| b.is_ascii_digit()),
             ("{alnum:64}", |b| {
@@ -371,7 +375,7 @@ mod tests {
         for (text, allowed) in cases {
             let template = parse(text).unwrap();
             for _ in 0..50 {
-                let id = template.generate(&list, &mut SystemEntropy).unwrap();
+                let id = template.generate(&mut SystemEntropy).unwrap();
                 assert_eq!(id.len(), 64);
                 assert!(id.bytes().all(allowed), "{text}: {id}");
                 assert!(is_valid_id(&id));
@@ -407,6 +411,22 @@ mod tests {
     }
 
     #[test]
+    fn generation_uses_the_wordlist_the_length_was_checked_against() {
+        let long_word = "q".repeat(20);
+        let text = EMBEDDED_TEXT.replacen("\tabacus", &format!("\t{long_word}"), 1);
+        let long_list = Wordlist::parse(&text).unwrap();
+        let template = IdTemplate::parse("{word:3}", long_list).unwrap();
+        assert_eq!(template.max_len(), 3 * 21 - 1);
+        let id = template
+            .generate(&mut ReplayEntropy::of_u32s(&[0, 0, 0]))
+            .unwrap();
+        assert_eq!(id, [long_word.as_str(); 3].join("-"));
+        assert_eq!(id.len(), template.max_len());
+        // The same template against the embedded list has a smaller bound.
+        assert_eq!(parse("{word:3}").unwrap().max_len(), 29);
+    }
+
+    #[test]
     fn template_input_is_capped_before_parsing() {
         let long = "{digits:1}".repeat(26);
         assert_eq!(long.len(), 260);
@@ -434,6 +454,7 @@ mod tests {
             ("{digits:-7}", Some(8), "from 1 to 64"),
             ("{digits:100}", Some(8), "from 1 to 64"),
             ("{digits: 7}", Some(8), "from 1 to 64"),
+            ("{digits:\u{0663}}", Some(8), "from 1 to 64"),
             ("{digits:}", Some(8), "from 1 to 64"),
             ("{digits:3:4}", Some(8), "from 1 to 64"),
             ("{word:3", Some(0), "never closed"),
@@ -454,11 +475,10 @@ mod tests {
 
     #[test]
     fn entropy_failure_aborts_generation() {
-        let list = Wordlist::embedded().unwrap();
         let template = parse("{alnum:4}").unwrap();
         assert_eq!(
             template
-                .generate(&list, &mut ReplayEntropy::of_u32s(&[1, 2, 3]))
+                .generate(&mut ReplayEntropy::of_u32s(&[1, 2, 3]))
                 .unwrap_err(),
             EntropyError
         );

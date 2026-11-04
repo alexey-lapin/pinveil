@@ -95,7 +95,7 @@ pub struct MessagesConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageIdConfig {
-    pub template: IdTemplate,
+    pub template: IdTemplate<'static>,
     pub min_bits: u32,
 }
 
@@ -481,7 +481,7 @@ fn build_message_id(v: &Values<'_>) -> Result<MessageIdConfig, ConfigError> {
     }
     let wordlist = Wordlist::embedded().map_err(|e| error(format!("embedded wordlist: {e}")))?;
     let text = v.raw("message_id.template");
-    let template = IdTemplate::parse(text, &wordlist)
+    let template = IdTemplate::parse(text, wordlist)
         .map_err(|e| error(format!("message_id.template = {text:?}: {e}")))?;
     let bits = template.bits();
     if bits < f64::from(min_bits) {
@@ -503,7 +503,9 @@ fn warn_on_small_id_space(
     #[expect(clippy::cast_precision_loss, reason = "a rough threshold is enough")]
     let wanted = (1000.0 * store.max_messages as f64).log2();
     let bits = message_id.template.bits();
-    if bits < wanted {
+    // The tolerance keeps an exact match, such as 10^7 ids for 10^4 messages, quiet
+    // despite rounding in the two logarithms.
+    if bits + 1e-9 < wanted {
         warnings.push(Warning(format!(
             "message_id.template has {bits:.1} bits, under 1000 x store.max_messages ({wanted:.1} bits); ids may collide and are easy to guess"
         )));
@@ -922,6 +924,13 @@ mod tests {
             "{Alnum:8}",
             "env beats file"
         );
+        let (config, _) = load_with(
+            &["--config", "c"],
+            &[("PINVEIL_MESSAGE_ID__MIN_BITS", "33")],
+            Some(file),
+        )
+        .unwrap();
+        assert_eq!(config.message_id.min_bits, 33, "env beats file");
 
         // {digits:10} is 33.2 bits: passes the default floor, fails a floor of 34.
         assert!(
@@ -979,6 +988,21 @@ mod tests {
         )
         .unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
+        // Exactly 1000 x store.max_messages ids is enough; one digit fewer is not.
+        for (template, expected) in [("{digits:7}", 0), ("{digits:6}", 1)] {
+            let (_, warnings) = load_with(
+                &[],
+                &[
+                    env[0],
+                    ("PINVEIL_MESSAGE_ID__TEMPLATE", template),
+                    ("PINVEIL_MESSAGE_ID__MIN_BITS", "1"),
+                    ("PINVEIL_STORE__MAX_MESSAGES", "10000"),
+                ],
+                None,
+            )
+            .unwrap();
+            assert_eq!(warnings.len(), expected, "{template}: {warnings:?}");
+        }
     }
 
     #[test]
