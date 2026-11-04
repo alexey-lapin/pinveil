@@ -131,7 +131,7 @@ Steps 2 to 5 are serialized per message id, so two concurrent retrievals of the 
 | 429 | `{"error": "Rate limit exceeded"}` |
 | 503 | `{"error": ...}` storage error, or too many retrievals in progress. No blob is sent. |
 
-With the default limit of 3, wrong PINs return 403, 403, 403. The third one burns the message, and every later request returns 404. A wrong PIN on a live message returns 403 while an unknown id returns 404. That is an accepted part of the contract: ids carry about 58 bits, so nobody can enumerate them.
+With the default limit of 3, wrong PINs return 403, 403, 403. The third one burns the message, and every later request returns 404. A wrong PIN on a live message returns 403 while an unknown id returns 404. That is an accepted part of the contract: default ids carry about 58.7 bits, so nobody can enumerate them. A template near the `message_id.min_bits` floor is weaker, see [Message ids](#message-ids).
 
 ### Response headers on every response
 
@@ -303,7 +303,11 @@ The server is honest but curious. It may look at everything it receives, so it m
 
 ### Message ids
 
-- The server generates ids, never the client. The format is `word-word-word-NNNNNN`: 3 random EFF words, then a 6-digit number padded with zeros, all lowercase and joined with `-`. Both counts can be configured.
+- The server generates ids, never the client. `message_id.template` sets their shape. The default, `{word:3}-{digits:6}`, gives `word-word-word-NNNNNN`: 3 random EFF words, then a 6-digit number padded with zeros, all lowercase and joined with `-`.
+- Placeholders: `{word}` or `{word:N}` (N EFF words joined with `-`, about 12.9 bits each), `{digits:N}` (about 3.3 bits per digit), `{alnum:N}` (`a-z0-9`, about 5.2 bits per character), and `{Alnum:N}` (`A-Za-z0-9`, about 6.0 bits per character). N is 1 to 64, with no leading zero. `digits`, `alnum`, and `Alnum` need it; `{word}` means one word.
+- Literal text between placeholders may use only `A-Z a-z 0-9 - . _ ~`, so an id is always one URL path segment. There is no escaping and no whitespace. A template is at most 256 bytes, needs at least one placeholder, and its longest possible id is at most 128 characters.
+- The server sums the template's bits from exact alphabet sizes and refuses to start below `message_id.min_bits` (default 32). Summing is sound because no EFF word is a prefix of another (the wordlist check enforces it), so a fixed template never turns two different draws into the same id. The server warns at startup when the id space is under 1000 times `store.max_messages`.
+- Clients accept any id made of `A-Z a-z 0-9 - . _ ~`, not just the configured template, so links stay valid after the template changes.
 - The server uses a CSPRNG. On a collision it retries up to 10 times, then returns 503.
 - Ids are public. They show up in paths and access logs. That's accepted.
 
@@ -392,8 +396,8 @@ Settings come from, highest precedence first: command-line options, environment 
 | `messages.max_files` | `256` | Creation limit on file count, at most the protocol ceiling |
 | `messages.max_manifest_bytes` | `262144` (256 KiB) | Creation limit on manifest size, at most the protocol ceiling |
 | `messages.pbkdf2_iterations` | `600000` | Client KDF cost for new messages |
-| `message_id.words` | `3` | Words in a message id |
-| `message_id.digits` | `6` | Digits in a message id |
+| `message_id.template` | `{word:3}-{digits:6}` | Shape of message ids, see [Message ids](#message-ids) |
+| `message_id.min_bits` | `32` | Least entropy a template may have, 1 to 256 |
 | `store.mode` | `memory` | `memory` or `sqlite` |
 | `store.path` | none | SQLite file path. Required in `sqlite` mode. |
 | `store.max_messages` | `1000` | Count cap |

@@ -82,7 +82,9 @@ also end up.
 
 ### Someone who has neither
 
-Ids are random, about 58 bits, so nobody can find messages by guessing. The server returns
+Ids are random, about 58.7 bits with the default template, so nobody can find messages by
+guessing. An operator can choose a weaker template down to `message_id.min_bits` (32 by
+default); near that floor, a guesser with many requests can find live ids. The server returns
 the same 404 for a message that never existed, expired, was opened, or was deleted after wrong
 PINs.
 
@@ -133,7 +135,7 @@ failure.
 |---|---|---|
 | A correct PIN with a wrong or truncated passphrase still deletes the message. | The server can't check the passphrase without learning it. Both clients warn before the PIN is sent. | `ACC-wrong-passphrase-consumes` in `tests/browser/roundtrip.spec.js` |
 | If the connection drops after the server answers, the message is lost. | Deleting before delivery is what makes "at most once" hold. A retry would need the server to keep the message after handing it out. | `WEB-retrieve.lost-in-transit` in `tests/browser/robustness.spec.js` |
-| A wrong PIN on a live message returns 403, while an unknown id returns 404, so a 403 confirms the id exists. | Ids can't be guessed, and the recipient needs to know a PIN was wrong rather than the message gone. | `acc_403_live_id` in `crates/pinveil-server/tests/contract/messages.rs` |
+| A wrong PIN on a live message returns 403, while an unknown id returns 404, so a 403 confirms the id exists. | Ids can't be guessed with the default template, and the recipient needs to know a PIN was wrong rather than the message gone. Weaker templates make this oracle more useful, which is why `message_id.min_bits` exists. | `acc_403_live_id` in `crates/pinveil-server/tests/contract/messages.rs` |
 | Message ids appear in retrieval paths and access logs. | They are public by design. The log shows when someone tried to open a message, not what it holds. The create request's line has no id. | `acc_message_ids_appear_in_logs` in `crates/pinveil-server/tests/contract/logs.rs` |
 
 ## Out of scope

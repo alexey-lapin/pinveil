@@ -199,13 +199,12 @@ mod tests {
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use pinveil_core::wordlist::Wordlist;
     use tower::ServiceExt;
 
     use crate::app::{AppState, router};
     use crate::config::{Sources, load};
     use crate::pin::PinVerifier;
-    use crate::service::{HashPool, Parts, Policy, Service, SystemClock, WordIds};
+    use crate::service::{HashPool, Parts, Policy, Service, SystemClock, TemplateIds};
     use crate::store::{
         Attempt, InsertError, MemoryStore, MessageMeta, NewMessage, Store, StoreError,
     };
@@ -317,7 +316,7 @@ mod tests {
             verifier: Arc::new(PlainVerifier),
             pool: HashPool::new(2, 8),
             clock: Arc::new(SystemClock),
-            ids: Arc::new(WordIds::new(Wordlist::embedded().unwrap(), 3, 6)),
+            ids: Arc::new(TemplateIds::new(config.message_id.template.clone())),
             policy: Policy::from_config(&config),
         });
         let app = router(Arc::new(AppState::with_service(config, service)));

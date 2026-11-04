@@ -78,6 +78,24 @@ fn cli_roundtrip_text_and_files_with_byte_exact_stdout() {
     assert!(shows(&shown, "memory only"), "store notice: {shown}");
 }
 
+#[test]
+fn cli_roundtrip_with_a_custom_id_template() {
+    let server = Server::start_with(&[("PINVEIL_MESSAGE_ID__TEMPLATE", "Id.{Alnum:12}_x~{word}")]);
+    let scratch = Scratch::new();
+    let (link, pin) = send(&server, &scratch, Some(b"custom id\n"), &[]);
+    let id = link
+        .strip_prefix(&format!("{}/message/", server.url))
+        .and_then(|rest| rest.split_once('#'))
+        .map(|(id, _)| id)
+        .expect(&link);
+    assert!(id.starts_with("Id.") && id.contains("_x~"), "{id}");
+
+    let text = scratch.path("text.out");
+    let shown = get(&scratch, &link, &pin, &[], Some(&text));
+    assert_eq!(exit_code(&shown), 0, "{shown}");
+    assert_eq!(fs::read(&text).unwrap(), b"custom id\n");
+}
+
 /// On Unix the CLI's stdout is the pseudo-terminal, so terminal detection and neutralization
 /// are exercised end to end. The Windows harness can only give stdout as `> CON`, which cmd
 /// opens write-only; `GetConsoleMode` needs read access, so the CLI rightly sees a file there

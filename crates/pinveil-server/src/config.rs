@@ -12,15 +12,29 @@ use std::time::Duration;
 
 use ipnet::IpNet;
 use pinveil_core::envelope::is_accepted_kdf_iterations;
+use pinveil_core::id_template::{DEFAULT_TEMPLATE, IdTemplate};
 use pinveil_core::protocol::{
     KDF_ITERATIONS_MAX, KDF_ITERATIONS_MIN, MAX_FILES_CEILING, MAX_MANIFEST_BYTES_CEILING,
 };
+use pinveil_core::wordlist::Wordlist;
 
 /// Longest TTL accepted, so every expiry stays well inside what RFC 3339 can express.
 const MAX_TTL_LIMIT: Duration = Duration::from_hours(24 * 3650);
 
 /// Largest payload the browser's store-only ZIP32 writer can export.
 const ZIP32_MAX_PAYLOAD_BYTES: usize = 4_000_000_000;
+
+/// Keys that were removed, and what replaced them. Setting one names the replacement.
+const REMOVED: &[(&str, &str)] = &[
+    (
+        "message_id.words",
+        "message_id.template (words = W and digits = D become \"{word:W}-{digits:D}\")",
+    ),
+    (
+        "message_id.digits",
+        "message_id.template (words = W and digits = D become \"{word:W}-{digits:D}\")",
+    ),
+];
 
 /// Defaults for every key. The key set is also the list of allowed keys.
 const DEFAULTS: &[(&str, &str)] = &[
@@ -35,8 +49,8 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("messages.max_files", "256"),
     ("messages.max_manifest_bytes", "262144"),
     ("messages.pbkdf2_iterations", "600000"),
-    ("message_id.words", "3"),
-    ("message_id.digits", "6"),
+    ("message_id.template", DEFAULT_TEMPLATE),
+    ("message_id.min_bits", "32"),
     ("store.mode", "memory"),
     ("store.path", ""),
     ("store.max_messages", "1000"),
@@ -81,8 +95,8 @@ pub struct MessagesConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageIdConfig {
-    pub words: usize,
-    pub digits: u32,
+    pub template: IdTemplate<'static>,
+    pub min_bits: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +282,11 @@ fn set(
     value: String,
     source: &str,
 ) -> Result<(), ConfigError> {
+    if let Some((_, replacement)) = REMOVED.iter().find(|(old, _)| *old == key) {
+        return Err(error(format!(
+            "{key} (from {source}) was removed; use {replacement}"
+        )));
+    }
     match values.get_mut(key) {
         Some(slot) => {
             *slot = value;
@@ -358,16 +377,9 @@ fn build(
     let v = Values(values);
     let mut warnings = Vec::new();
     let messages = build_messages(&v)?;
-    let message_id = MessageIdConfig {
-        words: v.parse("message_id.words")?,
-        digits: v.parse("message_id.digits")?,
-    };
-    if !(1..=8).contains(&message_id.words) || !(1..=9).contains(&message_id.digits) {
-        return Err(error(
-            "message_id.words must be 1 to 8 and message_id.digits 1 to 9",
-        ));
-    }
+    let message_id = build_message_id(&v)?;
     let store = build_store(&v, &messages)?;
+    warn_on_small_id_space(&message_id, &store, &mut warnings);
     let pin = build_pin(&v, cpus, &mut warnings)?;
     let rate_limit = build_rate_limit(&v)?;
     let config = Config {
@@ -460,6 +472,44 @@ fn build_messages(v: &Values<'_>) -> Result<MessagesConfig, ConfigError> {
         )));
     }
     Ok(messages)
+}
+
+fn build_message_id(v: &Values<'_>) -> Result<MessageIdConfig, ConfigError> {
+    let min_bits: u32 = v.parse("message_id.min_bits")?;
+    if !(1..=256).contains(&min_bits) {
+        return Err(error("message_id.min_bits must be between 1 and 256"));
+    }
+    let wordlist = Wordlist::embedded().map_err(|e| error(format!("embedded wordlist: {e}")))?;
+    let text = v.raw("message_id.template");
+    let template = IdTemplate::parse(text, wordlist)
+        .map_err(|e| error(format!("message_id.template = {text:?}: {e}")))?;
+    let bits = template.bits();
+    if bits < f64::from(min_bits) {
+        return Err(error(format!(
+            "message_id.template = {text:?} has {bits:.1} bits of entropy, below message_id.min_bits = {min_bits}"
+        )));
+    }
+    Ok(MessageIdConfig { template, min_bits })
+}
+
+/// Warns when the id space is under 1000 times `store.max_messages`. That is conservative
+/// collision headroom: retries only start failing when the space is nearly full, but ids
+/// that small are also easy to guess.
+fn warn_on_small_id_space(
+    message_id: &MessageIdConfig,
+    store: &StoreConfig,
+    warnings: &mut Vec<Warning>,
+) {
+    #[expect(clippy::cast_precision_loss, reason = "a rough threshold is enough")]
+    let wanted = (1000.0 * store.max_messages as f64).log2();
+    let bits = message_id.template.bits();
+    // The tolerance keeps an exact match, such as 10^7 ids for 10^4 messages, quiet
+    // despite rounding in the two logarithms.
+    if bits + 1e-9 < wanted {
+        warnings.push(Warning(format!(
+            "message_id.template has {bits:.1} bits, under 1000 x store.max_messages ({wanted:.1} bits); ids may collide and are easy to guess"
+        )));
+    }
 }
 
 fn build_store(v: &Values<'_>, messages: &MessagesConfig) -> Result<StoreConfig, ConfigError> {
@@ -828,11 +878,130 @@ mod tests {
                 "trusted_proxies",
             ),
             ("PINVEIL_RATE_LIMIT__WINDOW", "soon", "not a duration"),
-            ("PINVEIL_MESSAGE_ID__DIGITS", "12", "message_id"),
+            ("PINVEIL_MESSAGE_ID__TEMPLATE", "{word", "never closed"),
+            (
+                "PINVEIL_MESSAGE_ID__TEMPLATE",
+                "{digits:9}",
+                "below message_id.min_bits",
+            ),
+            ("PINVEIL_MESSAGE_ID__MIN_BITS", "0", "between 1 and 256"),
+            ("PINVEIL_MESSAGE_ID__MIN_BITS", "257", "between 1 and 256"),
+            (
+                "PINVEIL_MESSAGE_ID__WORDS",
+                "4",
+                "was removed; use message_id.template",
+            ),
+            (
+                "PINVEIL_MESSAGE_ID__DIGITS",
+                "6",
+                "was removed; use message_id.template",
+            ),
         ];
         for (key, value, expected) in cases {
             let message = err(load_with(&[], &[(key, value)], None));
             assert!(message.contains(expected), "{key}={value}: {message}");
+        }
+    }
+
+    #[test]
+    fn cfg_message_id_template() {
+        let (config, _) = load_with(&[], &[], None).unwrap();
+        assert_eq!(config.message_id.template.as_str(), "{word:3}-{digits:6}");
+        assert_eq!(config.message_id.min_bits, 32);
+
+        let file = "[message_id]\ntemplate = \"msg_{alnum:8}\"\nmin_bits = 40\n";
+        let (config, _) = load_with(&["--config", "c"], &[], Some(file)).unwrap();
+        assert_eq!(config.message_id.template.as_str(), "msg_{alnum:8}");
+        assert_eq!(config.message_id.min_bits, 40);
+        let (config, _) = load_with(
+            &["--config", "c"],
+            &[("PINVEIL_MESSAGE_ID__TEMPLATE", "{Alnum:8}")],
+            Some(file),
+        )
+        .unwrap();
+        assert_eq!(
+            config.message_id.template.as_str(),
+            "{Alnum:8}",
+            "env beats file"
+        );
+        let (config, _) = load_with(
+            &["--config", "c"],
+            &[("PINVEIL_MESSAGE_ID__MIN_BITS", "33")],
+            Some(file),
+        )
+        .unwrap();
+        assert_eq!(config.message_id.min_bits, 33, "env beats file");
+
+        // {digits:10} is 33.2 bits: passes the default floor, fails a floor of 34.
+        assert!(
+            load_with(
+                &[],
+                &[("PINVEIL_MESSAGE_ID__TEMPLATE", "{digits:10}")],
+                None
+            )
+            .is_ok()
+        );
+        assert!(
+            err(load_with(
+                &[],
+                &[
+                    ("PINVEIL_MESSAGE_ID__TEMPLATE", "{digits:10}"),
+                    ("PINVEIL_MESSAGE_ID__MIN_BITS", "34"),
+                ],
+                None
+            ))
+            .contains("33.2 bits")
+        );
+        assert!(
+            err(load_with(
+                &["--config", "c"],
+                &[],
+                Some("[message_id]\nwords = 4\n")
+            ))
+            .contains("message_id.words (from the config file) was removed")
+        );
+    }
+
+    #[test]
+    fn cfg_message_id_small_space_warns() {
+        let env = [("PINVEIL_PIN__PEPPER", "p")];
+        let (_, warnings) = load_with(&[], &env, None).unwrap();
+        assert!(warnings.is_empty(), "default template: {warnings:?}");
+        // 1000 x 1000 messages needs about 19.9 bits; {digits:5} is 16.6.
+        let (_, warnings) = load_with(
+            &[],
+            &[
+                env[0],
+                ("PINVEIL_MESSAGE_ID__TEMPLATE", "{digits:5}"),
+                ("PINVEIL_MESSAGE_ID__MIN_BITS", "1"),
+            ],
+            None,
+        )
+        .unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].0.contains("1000 x store.max_messages"));
+        // {digits:10} is above the threshold for the default store.
+        let (_, warnings) = load_with(
+            &[],
+            &[env[0], ("PINVEIL_MESSAGE_ID__TEMPLATE", "{digits:10}")],
+            None,
+        )
+        .unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // Exactly 1000 x store.max_messages ids is enough; one digit fewer is not.
+        for (template, expected) in [("{digits:7}", 0), ("{digits:6}", 1)] {
+            let (_, warnings) = load_with(
+                &[],
+                &[
+                    env[0],
+                    ("PINVEIL_MESSAGE_ID__TEMPLATE", template),
+                    ("PINVEIL_MESSAGE_ID__MIN_BITS", "1"),
+                    ("PINVEIL_STORE__MAX_MESSAGES", "10000"),
+                ],
+                None,
+            )
+            .unwrap();
+            assert_eq!(warnings.len(), expected, "{template}: {warnings:?}");
         }
     }
 

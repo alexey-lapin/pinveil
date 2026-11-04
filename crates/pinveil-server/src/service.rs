@@ -15,9 +15,9 @@ use std::time::{Duration, SystemTime};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use pinveil_core::entropy::{Entropy, EntropyError, SystemEntropy};
-use pinveil_core::generate::{is_valid_pin, message_id};
+use pinveil_core::generate::is_valid_pin;
+use pinveil_core::id_template::IdTemplate;
 use pinveil_core::protocol::PROTOCOL_VERSION;
-use pinveil_core::wordlist::Wordlist;
 use tokio::sync::{Mutex, MutexGuard, Semaphore};
 
 use crate::config::Config;
@@ -48,27 +48,22 @@ pub trait IdSource: Send + Sync + 'static {
     fn next_id(&self) -> Result<String, EntropyError>;
 }
 
-/// Diceware ids from the validated wordlist and the system CSPRNG.
-pub struct WordIds {
-    wordlist: Wordlist<'static>,
-    words: usize,
-    digits: u32,
+/// Ids from the configured template (which carries its validated wordlist) and the system
+/// CSPRNG.
+pub struct TemplateIds {
+    template: IdTemplate<'static>,
 }
 
-impl WordIds {
+impl TemplateIds {
     #[must_use]
-    pub fn new(wordlist: Wordlist<'static>, words: usize, digits: u32) -> Self {
-        Self {
-            wordlist,
-            words,
-            digits,
-        }
+    pub fn new(template: IdTemplate<'static>) -> Self {
+        Self { template }
     }
 }
 
-impl IdSource for WordIds {
+impl IdSource for TemplateIds {
     fn next_id(&self) -> Result<String, EntropyError> {
-        message_id(&self.wordlist, &mut SystemEntropy, self.words, self.digits)
+        self.template.generate(&mut SystemEntropy)
     }
 }
 

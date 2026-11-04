@@ -55,6 +55,29 @@ async fn retrieve(server: &Server, id: &str, pin: &str) -> (u16, Vec<u8>) {
 }
 
 #[tokio::test]
+async fn srv_ids_old_ids_survive_a_template_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = sqlite_env(&dir.path().join("store.db"));
+    let server = start(&env).await;
+    let old = create(&server, b"made with the default template", "600").await;
+    server.stop().await;
+
+    let mut changed = env.clone();
+    changed.push(("PINVEIL_MESSAGE_ID__TEMPLATE", "T_{Alnum:10}".into()));
+    let server = start(&changed).await;
+    let new = create(&server, b"made with the new template", "600").await;
+    assert!(new.starts_with("T_") && new.len() == 12, "{new}");
+    assert_eq!(
+        retrieve(&server, &old, PIN).await,
+        (200, b"made with the default template".to_vec())
+    );
+    assert_eq!(
+        retrieve(&server, &new, PIN).await,
+        (200, b"made with the new template".to_vec())
+    );
+}
+
+#[tokio::test]
 async fn inv_10_memory_restart_loses() {
     let env = vec![("PINVEIL_STORE__MODE", "memory".to_owned())];
     let server = start(&env).await;

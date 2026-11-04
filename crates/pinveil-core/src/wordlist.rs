@@ -9,8 +9,10 @@ pub const WORDLIST_LEN: usize = 7776;
 /// [`Wordlist::embedded`] before use.
 pub const EMBEDDED_TEXT: &str = include_str!("../../../assets/eff_large_wordlist.txt");
 
-/// A validated wordlist: exactly [`WORDLIST_LEN`] distinct, well-formed words.
-#[derive(Debug, Clone)]
+/// A validated wordlist: exactly [`WORDLIST_LEN`] distinct, well-formed words, none of which
+/// is a prefix of another. Message id entropy relies on the last property
+/// ([`crate::id_template`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wordlist<'a> {
     words: Vec<&'a str>,
 }
@@ -24,6 +26,8 @@ pub enum WordlistError {
     MalformedLine(usize),
     #[error("wordlist line {0} repeats a dice code or word")]
     Duplicate(usize),
+    #[error("wordlist line {0} starts with another word in the list")]
+    NotPrefixFree(usize),
 }
 
 impl<'a> Wordlist<'a> {
@@ -47,6 +51,15 @@ impl<'a> Wordlist<'a> {
         if words.len() != WORDLIST_LEN {
             return Err(WordlistError::WrongCount(words.len()));
         }
+        // Sorted, any word that is a prefix of another is directly followed by one.
+        let mut order: Vec<usize> = (0..words.len()).collect();
+        order.sort_unstable_by_key(|&i| words[i]);
+        if let Some(pair) = order
+            .windows(2)
+            .find(|pair| words[pair[1]].starts_with(words[pair[0]]))
+        {
+            return Err(WordlistError::NotPrefixFree(pair[1] + 1));
+        }
         Ok(Self { words })
     }
 
@@ -60,6 +73,12 @@ impl<'a> Wordlist<'a> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.words.is_empty()
+    }
+
+    /// The length in bytes of the longest word.
+    #[must_use]
+    pub fn max_word_len(&self) -> usize {
+        self.words.iter().map(|w| w.len()).max().unwrap_or(0)
     }
 
     /// The word at `index`, which must be below [`WORDLIST_LEN`].
@@ -158,6 +177,16 @@ mod tests {
         }
         let blank_line = format!("{EMBEDDED}\n");
         assert!(Wordlist::parse(&blank_line).is_err());
+    }
+
+    #[test]
+    fn wordlist_must_be_prefix_free() {
+        // Line 2 is "abdomen", line 3 "abdominal"; "abdom" on line 2 prefixes both.
+        let prefixed = replace_line(2, "11112\tabdom");
+        assert_eq!(
+            Wordlist::parse(&prefixed).unwrap_err(),
+            WordlistError::NotPrefixFree(3)
+        );
     }
 
     #[test]

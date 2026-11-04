@@ -5,6 +5,7 @@
 
 use std::net::IpAddr;
 
+use pinveil_core::id_template::is_valid_id;
 use reqwest::Url;
 use zeroize::Zeroizing;
 
@@ -109,11 +110,9 @@ impl ShareLink {
         let (prefix, id) = {
             let path = url.path();
             let (prefix, id) = path.rsplit_once("/message/").ok_or_else(not_a_link)?;
-            if id.is_empty()
-                || !id
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-            {
+            // Any id a server template can produce, not just the default shape, so links
+            // keep working when an operator changes the template.
+            if !is_valid_id(id) {
                 return Err(not_a_link());
             }
             (format!("{prefix}/"), id.to_owned())
@@ -181,11 +180,19 @@ mod tests {
                 .as_str(),
             "https://pinveil.example/sub/api/messages/a-b-c-123456/retrieve"
         );
+        let link = ShareLink::parse(
+            "https://pinveil.example/message/Ticket_42.~Xy-z#cloak-tidal",
+            false,
+        )
+        .unwrap();
+        assert_eq!(link.id, "Ticket_42.~Xy-z", "case and . _ ~ are kept");
         for bad in [
             "https://pinveil.example/message/a-1",
             "https://pinveil.example/message/a-1#",
             "https://pinveil.example/other/a-1#cloak-tidal",
-            "https://pinveil.example/message/A_B#cloak-tidal",
+            "https://pinveil.example/message/a%2Fb#cloak-tidal",
+            "https://pinveil.example/message/a b#cloak-tidal",
+            "https://pinveil.example/message/a*b#cloak-tidal",
             "http://pinveil.example/message/a-1#cloak-tidal",
             "not a url#cloak-tidal",
         ] {

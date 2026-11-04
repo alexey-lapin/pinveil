@@ -33,6 +33,11 @@ async fn main() -> ExitCode {
     for warning in warnings {
         eprintln!("pinveil-server: warning: {}", warning.0);
     }
+    tracing::info!(
+        template = config.message_id.template.as_str(),
+        bits = format!("{:.1}", config.message_id.template.bits()),
+        "message ids"
+    );
     let store = match pinveil_server::open_store(&config) {
         Ok(store) => store,
         Err(error) => {
